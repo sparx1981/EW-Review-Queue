@@ -7,7 +7,7 @@ import Card from './Card';
 import ConfigPanel from './ConfigPanel';
 import HelpResources from './HelpResources';
 import GlobalConfigModal from './GlobalConfigModal';
-import { probeAndFetch, checkSession } from '../services/api';
+import { probeAndFetch, testApiConnection } from '../services/api';
 import { v4 as uuidv4 } from 'uuid';
 import Sortable from 'sortablejs';
 import { Plus, LayoutGrid } from 'lucide-react';
@@ -133,8 +133,8 @@ export default function DashboardView({ user }: DashboardViewProps) {
     if (savedTheme) setTheme(savedTheme);
     
     const checkUserSession = async () => {
-      const active = await checkSession(authHeader);
-      setHasSession(active);
+      const result = await testApiConnection(authHeader);
+      setHasSession(result.ok);
     };
     checkUserSession();
 

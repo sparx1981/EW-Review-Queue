@@ -51,7 +51,6 @@ function normalizeStatus(status: any): string {
 export function normalizeReview(raw: any): EWReview {
   const extensionName = resolveField(raw, FIELD_MAP.extensionName) || 'Unknown Extension';
   const isListingFlag = !!resolveField(raw, FIELD_MAP.isListingPage);
-  
   return {
     id: String(resolveField(raw, FIELD_MAP.id) || Math.random().toString(36).substr(2, 9)),
     extensionName,
@@ -65,11 +64,72 @@ export function normalizeReview(raw: any): EWReview {
   };
 }
 
+// Build the headers for every API request. The custom header x-session-cookie
+// is read by both the Vite dev proxy and the Firebase Cloud Function proxy
+// and converted into a real Cookie header on the server side.
+function buildHeaders(authHeader?: string): Record<string, string> {
+  const sessionCookie = getSessionCookie();
+  const headers: Record<string, string> = {
+    'Accept': 'application/json',
+  };
+
+  if (sessionCookie) {
+    headers['x-session-cookie'] = sessionCookie;
+  }
+
+  if (authHeader && authHeader.trim()) {
+    const trimmed = authHeader.trim();
+    if (trimmed.toLowerCase().startsWith('cookie:') || trimmed.includes('=')) {
+      // Treat as cookie string — also store as x-session-cookie
+      headers['x-session-cookie'] = trimmed.replace(/^cookie:\s*/i, '');
+    } else {
+      headers['Authorization'] = trimmed.startsWith('Bearer ') ? trimmed : `Bearer ${trimmed}`;
+    }
+  }
+
+  return headers;
+}
+
+export interface ConnectionTestResult {
+  ok: boolean;
+  status: number | null;
+  statusText: string;
+  hasCookie: boolean;
+  errorType: 'none' | 'cors' | 'auth' | 'network' | 'server';
+  detail: string;
+}
+
+export async function testApiConnection(authHeader?: string): Promise<ConnectionTestResult> {
+  const hasCookie = !!getSessionCookie() || !!authHeader?.trim();
+  const headers = buildHeaders(authHeader);
+
+  try {
+    const response = await fetch('/api/sketchup/reviews?completedOnly=false', {
+      method: 'HEAD',
+      headers,
+    });
+
+    if (response.ok) {
+      return { ok: true, status: response.status, statusText: 'Connected', hasCookie, errorType: 'none', detail: 'Successfully connected to Extension Warehouse API.' };
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      return { ok: false, status: response.status, statusText: response.statusText, hasCookie, errorType: 'auth', detail: `Authentication failed (${response.status}). Your session cookie may be expired or incorrect.` };
+    }
+
+    return { ok: false, status: response.status, statusText: response.statusText, hasCookie, errorType: 'server', detail: `Server returned ${response.status} ${response.statusText}.` };
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    if (msg.includes('CORS') || msg.includes('cross-origin') || msg.includes('Failed to fetch')) {
+      return { ok: false, status: null, statusText: 'CORS / Network Error', hasCookie, errorType: 'cors', detail: 'Could not reach the proxy. In development, make sure Vite is running. In production, ensure Firebase Functions are deployed.' };
+    }
+    return { ok: false, status: null, statusText: 'Network Error', hasCookie, errorType: 'network', detail: msg };
+  }
+}
+
 export function generateSampleData(days = 400): EWReview[] {
   const data: EWReview[] = [];
   const reviewers = ['Alex K.', 'Priya N.', 'Tom W.', 'Sarah C.', 'Marcus L.'];
-  const statuses = ['approved', 'denied', 'in_queue', 'in_review'];
-  const weights = [0.6, 0.25, 0.05, 0.1]; // Cumulative: 0.6, 0.85, 0.9, 1.0
 
   for (let i = 0; i < days; i++) {
     const date = dayjs().subtract(i, 'day');
@@ -86,7 +146,7 @@ export function generateSampleData(days = 400): EWReview[] {
       const reviewer = reviewers[Math.floor(Math.random() * reviewers.length)];
       const id = Math.random().toString(36).substr(2, 9);
       const isListing = Math.random() < 0.15;
-      
+
       data.push({
         id,
         extensionName: isListing ? `Collection ${v}` : `Extension ${v}-${i}`,
@@ -103,117 +163,67 @@ export function generateSampleData(days = 400): EWReview[] {
   return data;
 }
 
-export async function checkSession(authHeader?: string): Promise<boolean> {
-  const sessionCookie = getSessionCookie();
-  const headers: Record<string, string> = {
-    'Accept': 'application/json'
-  };
-  
-  if (sessionCookie) {
-    headers['x-sketchup-cookie'] = sessionCookie;
-  }
-
-  if (authHeader) {
-    if (authHeader.toLowerCase().startsWith('cookie:') || authHeader.includes('=')) {
-      headers['Cookie'] = authHeader.replace(/^cookie:\s*/i, '');
-    } else {
-      headers['Authorization'] = authHeader.startsWith('Bearer ') ? authHeader : `Bearer ${authHeader}`;
-    }
-  }
-
-  try {
-    const response = await fetch('/api/sketchup/reviews?completedOnly=false', { 
-      method: 'HEAD',
-      headers,
-      credentials: 'include' 
-    });
-    return response.ok;
-  } catch (error) {
-    return false;
-  }
-}
-
 export async function probeAndFetch(authHeader?: string): Promise<{ data: EWReview[], isSample: boolean, rawPayload?: any }> {
-  const sessionCookie = getSessionCookie();
+  const headers = buildHeaders(authHeader);
+
   const sources = [
     { name: 'Active Reviews', url: '/api/sketchup/reviews?completedOnly=false' },
-    { name: 'Completed Reviews', url: '/api/sketchup/reviews?completedOnly=true' }
+    { name: 'Completed Reviews', url: '/api/sketchup/reviews?completedOnly=true' },
   ];
 
-  const headers: Record<string, string> = {
-    'Accept': 'application/json'
-  };
-
-  if (sessionCookie) {
-    headers['x-sketchup-cookie'] = sessionCookie;
-  }
-
-  if (authHeader) {
-    if (authHeader.toLowerCase().startsWith('cookie:') || authHeader.includes('=')) {
-      headers['Cookie'] = authHeader.replace(/^cookie:\s*/i, '');
-    } else {
-      headers['Authorization'] = authHeader.startsWith('Bearer ') ? authHeader : `Bearer ${authHeader}`;
-    }
-  }
-
   let rawPayload: any = { sources: [] };
-  let errorLogs: string[] = [];
+  const errorLogs: string[] = [];
   let combinedData: EWReview[] = [];
 
   try {
     const results = await Promise.all(sources.map(async (source) => {
       try {
-        const response = await fetch(source.url, { 
-          headers,
-          credentials: 'include' 
-        });
+        const response = await fetch(source.url, { headers });
+
         if (response.ok) {
           const json = await response.json();
-          rawPayload.sources.push({ 
-            name: source.name, 
-            url: source.url, 
-            status: 'success', 
-            count: Array.isArray(json) ? json.length : 'unknown', 
-            data: json 
+          rawPayload.sources.push({
+            name: source.name,
+            url: source.url,
+            status: 'success',
+            count: Array.isArray(json) ? json.length : (json?.data ? json.data.length : 'unknown'),
+            data: json,
           });
-          if (Array.isArray(json)) {
-            return json.map(normalizeReview);
-          }
+
+          // Handle both array responses and { data: [...] } wrapped responses
+          const records = Array.isArray(json) ? json : (Array.isArray(json?.data) ? json.data : []);
+          return records.map(normalizeReview);
         }
-        errorLogs.push(`${source.name}: ${response.status} ${response.statusText}`);
-        rawPayload.sources.push({ name: source.name, url: source.url, status: 'failed', error: `${response.status} ${response.statusText}` });
+
+        const errorDetail = `${source.name}: HTTP ${response.status} ${response.statusText}`;
+        errorLogs.push(errorDetail);
+        rawPayload.sources.push({ name: source.name, url: source.url, status: 'failed', error: errorDetail });
         return [];
-      } catch (e) {
-        errorLogs.push(`${source.name}: Network error`);
-        rawPayload.sources.push({ name: source.name, url: source.url, status: 'error', error: 'Network error or blocked (CORS)' });
+      } catch (e: any) {
+        const errorDetail = `${source.name}: ${e?.message || 'Network error'}`;
+        errorLogs.push(errorDetail);
+        rawPayload.sources.push({ name: source.name, url: source.url, status: 'error', error: errorDetail });
         return [];
       }
     }));
 
     combinedData = results.flat();
 
-    // If we got ANY data from live sources, we're not in sample mode
     if (combinedData.length > 0) {
-      return {
-        data: combinedData,
-        isSample: false,
-        rawPayload
-      };
+      return { data: combinedData, isSample: false, rawPayload };
     }
   } catch (e) {
-    console.warn("API Probe failed", e);
+    console.warn('API probe failed', e);
   }
 
-  // Fallback to sample data if no live data reached us
   const sample = generateSampleData();
-  return { 
-    data: sample, 
-    isSample: true, 
-    rawPayload: { 
-      note: "FALLBACK: Connection to Extension Warehouse API failed. Combined results from new sources returned 0 records.", 
-      probes: errorLogs,
+  return {
+    data: sample,
+    isSample: true,
+    rawPayload: {
+      note: 'FALLBACK: Could not fetch live data. Showing sample data.',
+      errors: errorLogs,
       sources: rawPayload.sources,
-      data: sample 
-    } 
+    },
   };
 }

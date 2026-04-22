@@ -24,10 +24,12 @@ export default defineConfig(({mode}) => {
           rewrite: (path) => path.replace(/^\/api\/sketchup/, ''),
           configure: (proxy, _options) => {
             proxy.on('proxyReq', (proxyReq, req, _res) => {
-              const customCookie = req.headers['x-sketchup-cookie'];
+              const customCookie = req.headers['x-session-cookie'] || req.headers['x-sketchup-cookie'];
               if (customCookie) {
-                proxyReq.setHeader('Cookie', customCookie);
+                proxyReq.setHeader('Cookie', String(customCookie));
               }
+              proxyReq.setHeader('Accept', 'application/json');
+              proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (compatible; EW-Review-Dashboard/1.0)');
             });
           },
         },
