@@ -1,0 +1,53 @@
+{
+  "entities": {
+    "userProfile": {
+      "title": "User Profile",
+      "description": "User preferences and basic info",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "lastSeen": { "type": "string", "format": "date-time" },
+        "prefs": {
+          "type": "object",
+          "properties": {
+            "excludeListingPages": { "type": "boolean" },
+            "defaultDashboardId": { "type": "string" },
+            "theme": { "type": "string", "enum": ["light", "dark", "system"] }
+          }
+        }
+      },
+      "required": ["email"]
+    },
+    "dashboard": {
+      "title": "Dashboard",
+      "description": "A collection of rows and cards",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "order": { "type": "number" },
+        "layout": {
+          "type": "object",
+          "properties": {
+            "rows": {
+              "type": "array",
+              "items": { "type": "object" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "userProfile",
+      "description": "User profile data"
+    },
+    "users/{userId}/dashboards/{dashboardId}": {
+      "schema": "dashboard",
+      "description": "User dashboard configurations"
+    }
+  }
+}
