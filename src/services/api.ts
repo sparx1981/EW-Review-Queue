@@ -48,6 +48,36 @@ function normalizeStatus(status: any): string {
   return s;
 }
 
+export function extractRecordsFromResponse(json: any): any[] {
+  if (!json) return [];
+
+  // Bare array
+  if (Array.isArray(json)) return json;
+
+  // Try every common wrapper key
+  const wrapperKeys = ['data', 'reviews', 'items', 'results', 'records', 'queue', 'extensions', 'submissions', 'list', 'payload'];
+  for (const key of wrapperKeys) {
+    if (Array.isArray(json[key]) && json[key].length >= 0) {
+      return json[key];
+    }
+  }
+
+  // Look for any top-level key whose value is a non-empty array
+  for (const key of Object.keys(json)) {
+    if (Array.isArray(json[key]) && json[key].length > 0) {
+      console.info(`[EW] Found reviews array under unexpected key: "${key}"`);
+      return json[key];
+    }
+  }
+
+  // Single object that looks like one review record — wrap it
+  if (typeof json === 'object' && (json.id || json.extensionId || json.status || json.extension_id)) {
+    return [json];
+  }
+
+  return [];
+}
+
 export function normalizeReview(raw: any): EWReview {
   const extensionName = resolveField(raw, FIELD_MAP.extensionName) || 'Unknown Extension';
   const isListingFlag = !!resolveField(raw, FIELD_MAP.isListingPage);
@@ -95,33 +125,78 @@ export interface ConnectionTestResult {
   status: number | null;
   statusText: string;
   hasCookie: boolean;
-  errorType: 'none' | 'cors' | 'auth' | 'network' | 'server';
+  errorType: 'none' | 'cors' | 'auth' | 'network' | 'server' | 'wrong_cookie';
   detail: string;
+  rawResponse?: string;
 }
 
 export async function testApiConnection(authHeader?: string): Promise<ConnectionTestResult> {
   const hasCookie = !!getSessionCookie() || !!authHeader?.trim();
   const headers = buildHeaders(authHeader);
 
+  if (!hasCookie) {
+    return { ok: false, status: null, statusText: 'No cookie', hasCookie: false, errorType: 'auth', detail: 'No session cookie provided. Paste your cookie from the DevTools Network tab.' };
+  }
+
   try {
     const response = await fetch('/api/sketchup/reviews?completedOnly=false', {
-      method: 'HEAD',
+      method: 'GET',
       headers,
     });
 
-    if (response.ok) {
-      return { ok: true, status: response.status, statusText: 'Connected', hasCookie, errorType: 'none', detail: 'Successfully connected to Extension Warehouse API.' };
-    }
-
     if (response.status === 401 || response.status === 403) {
-      return { ok: false, status: response.status, statusText: response.statusText, hasCookie, errorType: 'auth', detail: `Authentication failed (${response.status}). Your session cookie may be expired or incorrect.` };
+      return { ok: false, status: response.status, statusText: response.statusText, hasCookie, errorType: 'auth', detail: `Authentication failed (${response.status}). Your session cookie is expired or incorrect.` };
     }
 
-    return { ok: false, status: response.status, statusText: response.statusText, hasCookie, errorType: 'server', detail: `Server returned ${response.status} ${response.statusText}.` };
+    if (!response.ok) {
+      return { ok: false, status: response.status, statusText: response.statusText, hasCookie, errorType: 'server', detail: `Server returned ${response.status} ${response.statusText}.` };
+    }
+
+    // Read the response body as text first
+    const rawText = await response.text();
+    const trimmedRaw = rawText.trim();
+
+    // Check if it's actually HTML (login redirect / not authenticated)
+    const isHtml = trimmedRaw.startsWith('<') || trimmedRaw.toLowerCase().includes('<!doctype') || trimmedRaw.toLowerCase().includes('<html');
+    if (isHtml) {
+      return {
+        ok: false,
+        status: response.status,
+        statusText: 'HTML response (not JSON)',
+        hasCookie,
+        errorType: 'wrong_cookie',
+        detail: 'The server returned a login/redirect page instead of data. Your cookie is valid in format but does not contain the authentication token — you are likely copying tracking cookies instead of the session cookie. See the guide below.',
+        rawResponse: trimmedRaw.slice(0, 400),
+      };
+    }
+
+    // Try to parse as JSON
+    let json: any;
+    try {
+      json = JSON.parse(rawText);
+    } catch {
+      return {
+        ok: false,
+        status: response.status,
+        statusText: 'Invalid JSON',
+        hasCookie,
+        errorType: 'server',
+        detail: 'Server responded but the content is not valid JSON.',
+        rawResponse: trimmedRaw.slice(0, 400),
+      };
+    }
+
+    const records = extractRecordsFromResponse(json);
+    if (records.length > 0) {
+      return { ok: true, status: response.status, statusText: 'Connected', hasCookie, errorType: 'none', detail: `Connected — ${records.length} review records found.` };
+    }
+
+    return { ok: true, status: response.status, statusText: 'Connected (empty)', hasCookie, errorType: 'none', detail: 'Connected successfully. The active review queue appears to be empty.' };
+
   } catch (err: any) {
     const msg = err?.message || String(err);
-    if (msg.includes('CORS') || msg.includes('cross-origin') || msg.includes('Failed to fetch')) {
-      return { ok: false, status: null, statusText: 'CORS / Network Error', hasCookie, errorType: 'cors', detail: 'Could not reach the proxy. In development, make sure Vite is running. In production, ensure Firebase Functions are deployed.' };
+    if (msg.includes('CORS') || msg.includes('cross-origin') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+      return { ok: false, status: null, statusText: 'Network Error', hasCookie, errorType: 'cors', detail: 'Could not reach the proxy server. Make sure the app is running correctly.' };
     }
     return { ok: false, status: null, statusText: 'Network Error', hasCookie, errorType: 'network', detail: msg };
   }
@@ -182,16 +257,18 @@ export async function probeAndFetch(authHeader?: string): Promise<{ data: EWRevi
 
         if (response.ok) {
           const json = await response.json();
+          const records = extractRecordsFromResponse(json);
+          
           rawPayload.sources.push({
             name: source.name,
             url: source.url,
             status: 'success',
-            count: Array.isArray(json) ? json.length : (json?.data ? json.data.length : 'unknown'),
+            rawResponseType: Array.isArray(json) ? 'array' : (typeof json === 'object' ? `object(keys:${Object.keys(json).join(',')})` : typeof json),
+            recordsExtracted: records.length,
+            firstRecord: records[0] ?? null,
             data: json,
           });
 
-          // Handle both array responses and { data: [...] } wrapped responses
-          const records = Array.isArray(json) ? json : (Array.isArray(json?.data) ? json.data : []);
           return records.map(normalizeReview);
         }
 
@@ -209,7 +286,9 @@ export async function probeAndFetch(authHeader?: string): Promise<{ data: EWRevi
 
     combinedData = results.flat();
 
-    if (combinedData.length > 0) {
+    // If at least one source responded with HTTP 200 (even an empty array), treat this as live data
+    const anySourceSucceeded = rawPayload.sources.some((s: any) => s.status === 'success');
+    if (anySourceSucceeded) {
       return { data: combinedData, isSample: false, rawPayload };
     }
   } catch (e) {

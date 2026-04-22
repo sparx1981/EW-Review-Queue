@@ -412,13 +412,21 @@ export default function DashboardView({ user }: DashboardViewProps) {
 
       <GlobalConfigModal 
         isOpen={isConfigOpen}
-        onClose={() => setIsConfigOpen(false)}
+        onClose={() => {
+          setIsConfigOpen(false);
+          handleRefresh();
+        }}
         authHeader={authHeader}
         onUpdateAuth={(val) => {
           setAuthHeader(val);
           localStorage.setItem('ew_auth_header', val);
         }}
         theme={theme}
+        onRefreshNeeded={handleRefresh}
+        onOpenDebug={() => {
+          setIsConfigOpen(false);
+          setIsDebugOpen(true);
+        }}
       />
 
       <DebugModal 

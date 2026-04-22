@@ -1,9 +1,9 @@
-import { X, Lock, ChevronDown, ChevronUp, CheckCircle, XCircle, AlertCircle, Loader, Copy, ExternalLink } from 'lucide-react';
+import { X, Lock, ChevronDown, ChevronUp, CheckCircle, XCircle, AlertCircle, Loader, ExternalLink, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { getSessionCookie, setSessionCookie } from '../services/dataStore';
 import { testApiConnection, ConnectionTestResult } from '../services/api';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 
 interface GlobalConfigModalProps {
   isOpen: boolean;
@@ -11,20 +11,63 @@ interface GlobalConfigModalProps {
   authHeader: string;
   onUpdateAuth: (val: string) => void;
   theme: 'light' | 'dark';
+  onRefreshNeeded?: () => void;
+  onOpenDebug?: () => void;
 }
 
-const CONSOLE_SNIPPET = `// Run this in your browser console while on extensions.sketchup.com
-// It copies your visible session cookies to clipboard.
-(function() {
-  const cookies = document.cookie;
-  if (!cookies) {
-    alert('No readable cookies found. The session may use HttpOnly cookies — use the DevTools method instead.');
-    return;
+// Known tracking/analytics cookie name patterns — these are NEVER auth cookies
+const TRACKING_PREFIXES = [
+  '_mkto_trk', '_vwo_', '_ga', '_gid', '__utm', '_fbp', '_fbc',
+  '_hjid', '_hjSession', 'intercom-', 'mp_', 'ajs_', 'amplitude_',
+  '__hstc', '__hssc', '__hsfp', 'hubspotutk', '_uetsid', '_uetvid',
+  'BIGipServer', 'incap_ses', 'visid_incap',
+];
+
+// Cookie names that strongly suggest authentication
+const AUTH_INDICATORS = [
+  'session', 'auth', 'token', 'credential', 'remember', 'logged',
+  'user_id', 'access', 'jwt', 'bearer', 'oauth', 'signin', 'login',
+  'trimble', 'tc_', 'sso', 'identity', 'account',
+];
+
+interface CookieAnalysis {
+  trackingCookies: string[];
+  authCookies: string[];
+  unknownCookies: string[];
+  hasOnlyTracking: boolean;
+  hasAnyAuth: boolean;
+}
+
+function analyseCookies(cookieStr: string): CookieAnalysis {
+  if (!cookieStr.trim()) return { trackingCookies: [], authCookies: [], unknownCookies: [], hasOnlyTracking: false, hasAnyAuth: false };
+
+  const pairs = cookieStr.split(';').map(s => s.trim()).filter(Boolean);
+  const trackingCookies: string[] = [];
+  const authCookies: string[] = [];
+  const unknownCookies: string[] = [];
+
+  for (const pair of pairs) {
+    const name = pair.split('=')[0].trim().toLowerCase();
+    const isTracking = TRACKING_PREFIXES.some(p => name.startsWith(p.toLowerCase()));
+    const isAuth = AUTH_INDICATORS.some(a => name.includes(a.toLowerCase()));
+
+    if (isTracking) {
+      trackingCookies.push(pair.split('=')[0].trim());
+    } else if (isAuth) {
+      authCookies.push(pair.split('=')[0].trim());
+    } else {
+      unknownCookies.push(pair.split('=')[0].trim());
+    }
   }
-  navigator.clipboard.writeText(cookies).then(() => {
-    alert('Cookies copied to clipboard! Paste them into the dashboard config.');
-  });
-})();`;
+
+  return {
+    trackingCookies,
+    authCookies,
+    unknownCookies,
+    hasOnlyTracking: trackingCookies.length > 0 && authCookies.length === 0,
+    hasAnyAuth: authCookies.length > 0,
+  };
+}
 
 export default function GlobalConfigModal({
   isOpen,
@@ -32,18 +75,20 @@ export default function GlobalConfigModal({
   authHeader,
   onUpdateAuth,
   theme,
+  onRefreshNeeded,
+  onOpenDebug,
 }: GlobalConfigModalProps) {
   const [sessionCookie, setSessionCookieLocal] = useState('');
   const [showGuide, setShowGuide] = useState(false);
-  const [showSnippet, setShowSnippet] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null);
-  const [snippetCopied, setSnippetCopied] = useState(false);
+  const [showRawResponse, setShowRawResponse] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       setSessionCookieLocal(getSessionCookie());
       setTestResult(null);
+      setShowRawResponse(false);
     }
   }, [isOpen]);
 
@@ -51,39 +96,38 @@ export default function GlobalConfigModal({
     setSessionCookieLocal(val);
     setSessionCookie(val);
     setTestResult(null);
+    setShowRawResponse(false);
   };
+
+  const cookieAnalysis = useMemo(() => analyseCookies(sessionCookie), [sessionCookie]);
 
   const handleTest = useCallback(async () => {
     setTesting(true);
     setTestResult(null);
+    setShowRawResponse(false);
     const result = await testApiConnection(authHeader || undefined);
     setTestResult(result);
     setTesting(false);
-  }, [authHeader]);
-
-  const handleCopySnippet = () => {
-    navigator.clipboard.writeText(CONSOLE_SNIPPET).then(() => {
-      setSnippetCopied(true);
-      setTimeout(() => setSnippetCopied(false), 2000);
-    });
-  };
+    if (result.ok && onRefreshNeeded) {
+      onRefreshNeeded();
+    }
+  }, [authHeader, onRefreshNeeded]);
 
   const isDark = theme === 'dark';
-  const base = isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-white border-gray-200 text-gray-900';
+  const mutedCls = isDark ? 'text-slate-400' : 'text-gray-500';
+  const labelCls = isDark ? 'text-slate-500' : 'text-gray-400';
   const inputCls = isDark
     ? 'bg-slate-900 border-slate-800 text-white focus:border-blue-500'
     : 'bg-gray-50 border-gray-200 text-gray-900 focus:border-black';
-  const mutedCls = isDark ? 'text-slate-400' : 'text-gray-500';
-  const labelCls = isDark ? 'text-slate-500' : 'text-gray-400';
+  const borderCls = isDark ? 'border-slate-800' : 'border-gray-200';
+  const sectionBg = isDark ? 'bg-slate-900' : 'bg-gray-50';
 
   return (
     <AnimatePresence>
       {isOpen && (
         <>
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 0.5 }}
-            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }} animate={{ opacity: 0.5 }} exit={{ opacity: 0 }}
             onClick={onClose}
             className="fixed inset-0 bg-slate-900 z-[60]"
           />
@@ -92,12 +136,12 @@ export default function GlobalConfigModal({
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.95, opacity: 0 }}
             className={cn(
-              'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-lg rounded-xl z-[70] flex flex-col shadow-2xl overflow-hidden border',
-              base
+              'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-lg rounded-xl z-[70] flex flex-col shadow-2xl border overflow-hidden',
+              isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-white border-gray-200 text-gray-900'
             )}
           >
             {/* Header */}
-            <div className={cn('p-6 border-b flex items-center justify-between', isDark ? 'border-slate-800' : 'border-gray-100')}>
+            <div className={cn('p-6 border-b flex items-center justify-between flex-shrink-0', borderCls)}>
               <h2 className="text-sm font-bold uppercase tracking-widest flex items-center gap-2">
                 <Lock className="w-4 h-4" />
                 API Authentication
@@ -107,16 +151,31 @@ export default function GlobalConfigModal({
               </button>
             </div>
 
-            <div className="p-6 space-y-5 overflow-y-auto max-h-[80vh]">
+            <div className="p-6 space-y-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 200px)' }}>
+
+              {/* Intro */}
               <p className={cn('text-xs leading-relaxed', mutedCls)}>
-                This dashboard fetches live data from the SketchUp Extension Warehouse API. You must be a SketchUp reviewer with access to
-                <a href="https://extensions.sketchup.com" target="_blank" rel="noreferrer" className="underline ml-1">extensions.sketchup.com</a>.
-                Paste your session cookie below to authenticate.
+                Paste your <strong>full session cookie</strong> from the DevTools Network tab below. You must be signed in to{' '}
+                <a href="https://extensions.sketchup.com" target="_blank" rel="noreferrer" className="underline">extensions.sketchup.com</a>{' '}
+                as a reviewer.
               </p>
 
-              {/* Cookie input */}
+              {/* ─── CRITICAL WARNING ─── */}
+              <div className={cn('rounded-lg p-4 border flex gap-3', isDark ? 'bg-red-950/30 border-red-900/50' : 'bg-red-50 border-red-200')}>
+                <ShieldAlert className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+                <div className="space-y-1.5">
+                  <p className={cn('text-[11px] font-bold', isDark ? 'text-red-400' : 'text-red-700')}>
+                    Do NOT use the browser console snippet or the Application tab
+                  </p>
+                  <p className={cn('text-[11px] leading-relaxed', isDark ? 'text-red-400/80' : 'text-red-600')}>
+                    The SketchUp auth cookie is <strong>HttpOnly</strong> — it is invisible to JavaScript and cannot be copied by any console script. You must copy from <strong>DevTools → Network tab → Request Headers → Cookie</strong>.
+                  </p>
+                </div>
+              </div>
+
+              {/* Cookie textarea */}
               <div className="space-y-2">
-                <label className={cn('text-[10px] font-bold uppercase tracking-widest block', labelCls)}>Session Cookie</label>
+                <label className={cn('text-[10px] font-bold uppercase tracking-widest block', labelCls)}>Session Cookie (from Network tab)</label>
                 <textarea
                   value={sessionCookie}
                   onChange={(e) => handleCookieChange(e.target.value)}
@@ -124,20 +183,62 @@ export default function GlobalConfigModal({
                     'w-full px-4 py-3 rounded text-[11px] focus:outline-none transition-colors border font-mono min-h-[80px] resize-none',
                     inputCls
                   )}
-                  placeholder="Paste your cookie string here, e.g.  _session_id=abc123; user_id=456..."
+                  placeholder="Paste the full Cookie header value from DevTools Network tab..."
                 />
               </div>
 
-              {/* Test connection button + result */}
-              <div className="flex items-center gap-3">
+              {/* ─── COOKIE ANALYSER ─── */}
+              {sessionCookie.trim() && (
+                <div className={cn('rounded-lg border p-3 space-y-2', borderCls, sectionBg)}>
+                  <p className={cn('text-[10px] font-bold uppercase tracking-widest', labelCls)}>Cookie Analysis</p>
+
+                  {cookieAnalysis.hasOnlyTracking && (
+                    <div className={cn('flex gap-2 items-start rounded p-3', isDark ? 'bg-red-950/40 text-red-400' : 'bg-red-50 text-red-700')}>
+                      <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <div className="text-[11px] space-y-1">
+                        <p className="font-bold">Only tracking cookies detected — authentication will fail</p>
+                        <p>The cookies you pasted ({cookieAnalysis.trackingCookies.slice(0,3).join(', ')}{cookieAnalysis.trackingCookies.length > 3 ? '…' : ''}) are analytics trackers. They contain no login information. The SketchUp API will redirect you to a login page.</p>
+                        <p className="font-semibold">You must copy from DevTools → Network tab → a request to extensions.sketchup.com → Request Headers → Cookie row.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {cookieAnalysis.hasAnyAuth && (
+                    <div className={cn('flex gap-2 items-start rounded p-3', isDark ? 'bg-green-950/30 text-green-400' : 'bg-green-50 text-green-700')}>
+                      <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5" />
+                      <div className="text-[11px]">
+                        <p className="font-bold">Auth-related cookies detected: {cookieAnalysis.authCookies.join(', ')}</p>
+                        <p>These look like session cookies. Click Test Connection to verify.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {!cookieAnalysis.hasOnlyTracking && !cookieAnalysis.hasAnyAuth && cookieAnalysis.unknownCookies.length > 0 && (
+                    <div className={cn('flex gap-2 items-start rounded p-3', isDark ? 'bg-amber-950/30 text-amber-400' : 'bg-amber-50 text-amber-700')}>
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <div className="text-[11px]">
+                        <p>Unrecognised cookies: <strong>{cookieAnalysis.unknownCookies.slice(0,5).join(', ')}</strong></p>
+                        <p>These may include the auth cookie. Click Test Connection to find out.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  <p className={cn('text-[10px]', mutedCls)}>
+                    {cookieAnalysis.trackingCookies.length > 0 && <span className="text-red-500">Tracking: {cookieAnalysis.trackingCookies.length} · </span>}
+                    {cookieAnalysis.authCookies.length > 0 && <span className="text-green-500">Auth: {cookieAnalysis.authCookies.length} · </span>}
+                    {cookieAnalysis.unknownCookies.length > 0 && <span>Unknown: {cookieAnalysis.unknownCookies.length}</span>}
+                  </p>
+                </div>
+              )}
+
+              {/* Test button + result */}
+              <div className="space-y-3">
                 <button
                   onClick={handleTest}
-                  disabled={testing}
+                  disabled={testing || !sessionCookie.trim()}
                   className={cn(
-                    'flex items-center gap-2 px-5 py-2.5 rounded text-[11px] font-bold uppercase tracking-widest transition',
-                    isDark
-                      ? 'bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50'
-                      : 'bg-black hover:bg-gray-800 text-white disabled:opacity-50'
+                    'flex items-center gap-2 px-5 py-2.5 rounded text-[11px] font-bold uppercase tracking-widest transition w-full justify-center',
+                    isDark ? 'bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40' : 'bg-black hover:bg-gray-800 text-white disabled:opacity-40'
                   )}
                 >
                   {testing ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
@@ -145,19 +246,48 @@ export default function GlobalConfigModal({
                 </button>
 
                 {testResult && (
-                  <div className={cn('flex items-center gap-2 text-[11px] font-medium', testResult.ok ? 'text-green-600' : 'text-red-500')}>
+                  <div className={cn(
+                    'rounded-lg p-3 flex gap-3 items-start text-[11px]',
+                    testResult.ok
+                      ? (isDark ? 'bg-green-950/30 text-green-400' : 'bg-green-50 text-green-700')
+                      : (isDark ? 'bg-red-950/30 text-red-400' : 'bg-red-50 text-red-700')
+                  )}>
                     {testResult.ok
-                      ? <CheckCircle className="w-4 h-4" />
-                      : testResult.errorType === 'auth'
-                        ? <XCircle className="w-4 h-4" />
-                        : <AlertCircle className="w-4 h-4" />}
-                    <span>{testResult.detail}</span>
+                      ? <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                      : testResult.errorType === 'wrong_cookie'
+                        ? <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+                        : <XCircle className="w-4 h-4 shrink-0 mt-0.5" />}
+                    <div className="space-y-1.5 flex-1">
+                      <p className="font-semibold">{testResult.detail}</p>
+
+                      {testResult.rawResponse && (
+                        <div>
+                          <button
+                            onClick={() => setShowRawResponse(!showRawResponse)}
+                            className="underline text-[10px] opacity-70 hover:opacity-100"
+                          >
+                            {showRawResponse ? 'Hide' : 'Show'} raw server response
+                          </button>
+                          {showRawResponse && (
+                            <pre className={cn('mt-2 text-[10px] font-mono p-2 rounded overflow-x-auto whitespace-pre-wrap break-all', isDark ? 'bg-slate-900' : 'bg-white border border-gray-200')}>
+                              {testResult.rawResponse}
+                            </pre>
+                          )}
+                        </div>
+                      )}
+
+                      {testResult.ok && onOpenDebug && (
+                        <button onClick={onOpenDebug} className="underline text-[10px] opacity-70 hover:opacity-100">
+                          View raw API response in debug panel →
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
 
-              {/* Step-by-step guide (collapsible) */}
-              <div className={cn('rounded-lg border overflow-hidden', isDark ? 'border-slate-800' : 'border-gray-200')}>
+              {/* Step-by-step guide */}
+              <div className={cn('rounded-lg border overflow-hidden', borderCls)}>
                 <button
                   onClick={() => setShowGuide(!showGuide)}
                   className={cn(
@@ -175,60 +305,31 @@ export default function GlobalConfigModal({
                       initial={{ height: 0, opacity: 0 }}
                       animate={{ height: 'auto', opacity: 1 }}
                       exit={{ height: 0, opacity: 0 }}
-                      className={cn('px-4 pb-4 text-[11px] leading-relaxed space-y-2', mutedCls)}
+                      className={cn('px-4 pb-4 text-[11px] leading-relaxed', mutedCls)}
                     >
-                      <ol className="list-decimal list-inside space-y-1.5 pt-3">
-                        <li>Open <strong>Google Chrome</strong> and sign in to <a href="https://extensions.sketchup.com" target="_blank" rel="noreferrer" className="underline">extensions.sketchup.com</a>.</li>
-                        <li>Press <kbd className="px-1 py-0.5 rounded text-[10px] bg-gray-200 dark:bg-slate-700 font-mono">F12</kbd> to open DevTools, then click the <strong>Network</strong> tab.</li>
-                        <li>Reload the page. Click any request to <code className="font-mono">extensions.sketchup.com</code> in the list.</li>
-                        <li>In the right panel, scroll down to <strong>Request Headers</strong> and find the <strong>Cookie</strong> row.</li>
-                        <li>Right-click the Cookie value → <strong>Copy value</strong>.</li>
-                        <li>Paste the copied value into the Session Cookie field above.</li>
+                      <div className={cn('my-3 p-3 rounded-lg font-bold text-[11px] border', isDark ? 'bg-red-950/30 border-red-900/40 text-red-400' : 'bg-red-50 border-red-200 text-red-700')}>
+                        ⚠ IMPORTANT: You must use the <u>Network tab</u>. The Application tab and browser console only show non-HttpOnly tracking cookies — those will NOT work.
+                      </div>
+
+                      <ol className="list-decimal list-inside space-y-2">
+                        <li>In Chrome, navigate to <a href="https://extensions.sketchup.com" target="_blank" rel="noreferrer" className="underline font-semibold">extensions.sketchup.com</a> and make sure you are signed in.</li>
+                        <li>Press <kbd className="px-1 py-0.5 rounded text-[10px] bg-gray-200 dark:bg-slate-700 font-mono">F12</kbd> to open DevTools.</li>
+                        <li>Click the <strong>Network</strong> tab at the top of DevTools.</li>
+                        <li>Press <kbd className="px-1 py-0.5 rounded text-[10px] bg-gray-200 dark:bg-slate-700 font-mono">F5</kbd> to reload the page with Network recording active.</li>
+                        <li>In the Network request list, click the <strong>first request</strong> to <code className="font-mono bg-gray-100 dark:bg-slate-800 px-1 rounded">extensions.sketchup.com</code> (usually the document request at the top).</li>
+                        <li>In the right panel, click <strong>Headers</strong> then scroll to <strong>Request Headers</strong>.</li>
+                        <li>Find the row labelled <strong>cookie:</strong> — this will contain a long string with ALL cookies including the HttpOnly session cookie.</li>
+                        <li>Right-click that value and select <strong>Copy value</strong>.</li>
+                        <li>Paste into the Session Cookie field above.</li>
                       </ol>
 
                       <div className={cn('mt-3 p-3 rounded', isDark ? 'bg-amber-900/20 text-amber-400' : 'bg-amber-50 text-amber-700')}>
-                        <strong>Note:</strong> Session cookies expire. If the connection test fails after previously working, repeat these steps to get a fresh cookie.
+                        <strong>Tip:</strong> The auth cookie will be among names like <code className="font-mono">_session_id</code>, <code className="font-mono">auth_token</code>, <code className="font-mono">tc_session</code>, or similar — not <code className="font-mono">_mkto_trk</code> or <code className="font-mono">_ga</code> which are analytics trackers.
                       </div>
 
-                      {/* Console snippet alternative */}
-                      <button
-                        onClick={() => setShowSnippet(!showSnippet)}
-                        className="flex items-center gap-1 mt-2 underline text-[10px] opacity-70 hover:opacity-100"
-                      >
-                        {showSnippet ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                        Alternative: browser console snippet
-                      </button>
-
-                      <AnimatePresence>
-                        {showSnippet && (
-                          <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: 'auto', opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            className="space-y-2 pt-1"
-                          >
-                            <p>While on <strong>extensions.sketchup.com</strong>, open the Console tab in DevTools and paste this script. It will copy any readable cookies to your clipboard.</p>
-                            <div className="relative">
-                              <pre className={cn('text-[10px] font-mono p-3 rounded overflow-x-auto', isDark ? 'bg-slate-800' : 'bg-gray-100')}>
-                                {CONSOLE_SNIPPET}
-                              </pre>
-                              <button
-                                onClick={handleCopySnippet}
-                                className={cn(
-                                  'absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold transition',
-                                  isDark ? 'bg-slate-700 hover:bg-slate-600 text-white' : 'bg-white hover:bg-gray-200 text-gray-700 border border-gray-200'
-                                )}
-                              >
-                                <Copy className="w-3 h-3" />
-                                {snippetCopied ? 'Copied!' : 'Copy'}
-                              </button>
-                            </div>
-                            <p className={cn('text-[10px]', isDark ? 'text-amber-400' : 'text-amber-600')}>
-                              ⚠ This only captures non-HttpOnly cookies. If it returns empty, use the DevTools Network method above.
-                            </p>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
+                      <div className={cn('mt-2 p-3 rounded', isDark ? 'bg-blue-900/20 text-blue-400' : 'bg-blue-50 text-blue-700')}>
+                        <strong>Session cookies expire</strong> — typically after a few hours or when you log out. If the test worked previously but fails now, repeat these steps to get a fresh cookie.
+                      </div>
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -242,11 +343,12 @@ export default function GlobalConfigModal({
                 className={cn('flex items-center gap-2 text-[11px] underline', mutedCls)}
               >
                 <ExternalLink className="w-3.5 h-3.5" />
-                Open API endpoint directly (to verify you have access)
+                Open API endpoint directly (check if you get JSON or a login page)
               </a>
             </div>
 
-            <div className={cn('p-6 border-t flex justify-end', isDark ? 'border-slate-800 bg-slate-900/50' : 'border-gray-100 bg-gray-50')}>
+            {/* Footer */}
+            <div className={cn('p-6 border-t flex justify-end flex-shrink-0', isDark ? 'border-slate-800 bg-slate-900/50' : 'border-gray-100 bg-gray-50')}>
               <button
                 onClick={onClose}
                 className={cn(
