@@ -1,9 +1,10 @@
-import { X, Lock, ChevronDown, ChevronUp, CheckCircle, XCircle, AlertCircle, Loader, ExternalLink, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { X, Lock, ChevronDown, ChevronUp, CheckCircle, XCircle, AlertCircle, Loader, ExternalLink, ShieldAlert, ShieldCheck, Globe, Plus, Trash2, ShieldQuestion } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
-import { getSessionCookie, setSessionCookie } from '../services/dataStore';
-import { testApiConnection, ConnectionTestResult } from '../services/api';
+import { getSessionCookie, setSessionCookie, getSourceUrls, setSourceUrls } from '../services/dataStore';
+import { testApiConnection, ConnectionTestResult, validateSourceUrl } from '../services/api';
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { SourceConfig } from '../types';
 
 interface GlobalConfigModalProps {
   isOpen: boolean;
@@ -79,7 +80,11 @@ export default function GlobalConfigModal({
   onOpenDebug,
 }: GlobalConfigModalProps) {
   const [sessionCookie, setSessionCookieLocal] = useState('');
+  const [sourceUrls, setSourceUrlsLocal] = useState<SourceConfig[]>([]);
+  const [validatingUrls, setValidatingUrls] = useState<Record<number, boolean>>({});
+  const [urlResults, setUrlResults] = useState<Record<number, ConnectionTestResult | null>>({});
   const [showGuide, setShowGuide] = useState(false);
+  const [showSources, setShowSources] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null);
   const [showRawResponse, setShowRawResponse] = useState(false);
@@ -87,10 +92,47 @@ export default function GlobalConfigModal({
   useEffect(() => {
     if (isOpen) {
       setSessionCookieLocal(getSessionCookie());
+      setSourceUrlsLocal(getSourceUrls());
       setTestResult(null);
+      setUrlResults({});
       setShowRawResponse(false);
     }
   }, [isOpen]);
+
+  const handleSourceUrlChange = (index: number, field: keyof SourceConfig, value: string) => {
+    const updated = [...sourceUrls];
+    updated[index] = { ...updated[index], [field]: value };
+    setSourceUrlsLocal(updated);
+    setSourceUrls(updated);
+    // Clear validation result for this URL
+    setUrlResults(prev => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
+  };
+
+  const handleAddSource = () => {
+    const updated = [...sourceUrls, { name: 'New Source', url: '' }];
+    setSourceUrlsLocal(updated);
+    setSourceUrls(updated);
+  };
+
+  const handleRemoveSource = (index: number) => {
+    const updated = sourceUrls.filter((_, i) => i !== index);
+    setSourceUrlsLocal(updated);
+    setSourceUrls(updated);
+  };
+
+  const handleValidateUrl = async (index: number) => {
+    const url = sourceUrls[index].url;
+    if (!url.trim()) return;
+
+    setValidatingUrls(prev => ({ ...prev, [index]: true }));
+    const result = await validateSourceUrl(url, authHeader || undefined);
+    setUrlResults(prev => ({ ...prev, [index]: result }));
+    setValidatingUrls(prev => ({ ...prev, [index]: false }));
+  };
 
   const handleCookieChange = (val: string) => {
     setSessionCookieLocal(val);
@@ -185,6 +227,104 @@ export default function GlobalConfigModal({
                   )}
                   placeholder="Paste the full Cookie header value from DevTools Network tab..."
                 />
+              </div>
+
+              {/* ─── SOURCE URLs ─── */}
+              <div className={cn('rounded-lg border overflow-hidden', borderCls)}>
+                <button
+                  onClick={() => setShowSources(!showSources)}
+                  className={cn(
+                    'w-full flex items-center justify-between px-4 py-3 text-[11px] font-bold uppercase tracking-widest transition',
+                    isDark ? 'bg-slate-900 hover:bg-slate-800 text-slate-300' : 'bg-gray-50 hover:bg-gray-100 text-gray-600'
+                  )}
+                >
+                  <span className="flex items-center gap-2">
+                    <Globe className="w-3.5 h-3.5" />
+                    API Source URLs
+                  </span>
+                  {showSources ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
+
+                <AnimatePresence>
+                  {showSources && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className={cn('px-4 pb-4 space-y-4 pt-2', isDark ? 'bg-slate-950' : 'bg-white')}
+                    >
+                      <p className={cn('text-[10px]', mutedCls)}>
+                        Configure the JSON endpoints used to populate the dashboard. You can add multiple sources to combine data.
+                      </p>
+
+                      <div className="space-y-3">
+                        {sourceUrls.map((source, idx) => (
+                          <div key={idx} className={cn('p-3 rounded-lg border space-y-3', borderCls, sectionBg)}>
+                            <div className="flex items-center justify-between">
+                              <input
+                                value={source.name}
+                                onChange={(e) => handleSourceUrlChange(idx, 'name', e.target.value)}
+                                className={cn('bg-transparent border-none p-0 text-[11px] font-bold focus:ring-0 w-full', isDark ? 'text-white' : 'text-gray-900')}
+                                placeholder="Source Name"
+                              />
+                              <button
+                                onClick={() => handleRemoveSource(idx)}
+                                className="p-1 hover:text-red-500 transition-colors text-gray-400"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                            <div className="flex gap-2">
+                              <input
+                                value={source.url}
+                                onChange={(e) => handleSourceUrlChange(idx, 'url', e.target.value)}
+                                className={cn(
+                                  'flex-1 px-3 py-1.5 rounded text-[11px] focus:outline-none transition-colors border font-mono',
+                                  inputCls
+                                )}
+                                placeholder="/api/..."
+                              />
+                              <button
+                                onClick={() => handleValidateUrl(idx)}
+                                disabled={validatingUrls[idx] || !source.url.trim()}
+                                className={cn(
+                                  'px-3 py-1.5 rounded text-[10px] font-bold uppercase transition flex items-center gap-1.5 shrink-0',
+                                  isDark ? 'bg-slate-800 hover:bg-slate-700 text-white' : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+                                )}
+                              >
+                                {validatingUrls[idx] ? <Loader className="w-3 h-3 animate-spin" /> : <Globe className="w-3 h-3" />}
+                                Validate
+                              </button>
+                            </div>
+
+                            {urlResults[idx] && (
+                              <div className={cn(
+                                'rounded p-2 flex gap-2 items-start text-[10px]',
+                                urlResults[idx]?.ok
+                                  ? (isDark ? 'bg-green-950/30 text-green-400' : 'bg-green-50 text-green-700')
+                                  : (isDark ? 'bg-red-950/30 text-red-400' : 'bg-red-50 text-red-700')
+                              )}>
+                                {urlResults[idx]?.ok ? <CheckCircle className="w-3.5 h-3.5 mt-0.5" /> : <XCircle className="w-3.5 h-3.5 mt-0.5" />}
+                                <p className="leading-tight">{urlResults[idx]?.detail}</p>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+
+                        <button
+                          onClick={handleAddSource}
+                          className={cn(
+                            'w-full py-2 border-2 border-dashed rounded-lg flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-widest transition',
+                            isDark ? 'border-slate-800 hover:border-slate-700 text-slate-500 hover:text-slate-400' : 'border-gray-200 hover:border-gray-300 text-gray-400 hover:text-gray-500'
+                          )}
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          Add API Source
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
 
               {/* ─── COOKIE ANALYSER ─── */}

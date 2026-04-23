@@ -1,9 +1,10 @@
 import { User } from 'firebase/auth';
 import { Dashboard } from '../types';
-import { RefreshCw, Edit3, User as UserIcon, Plus, Eye, LogOut, FileText, HelpCircle, Moon, Sun, Terminal, Settings } from 'lucide-react';
+import { RefreshCw, Edit3, User as UserIcon, Plus, Eye, LogOut, FileText, Share2, Moon, Sun, Terminal, Settings, LayoutGrid, Check, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import dayjs from 'dayjs';
 import { useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface HeaderProps {
   user: User;
@@ -15,18 +16,24 @@ interface HeaderProps {
   isRefreshing: boolean;
   handleRefresh: () => void;
   lastRefreshed: Date;
+  autoRefreshInterval: number | null;
+  setAutoRefreshInterval: (interval: number | null) => void;
   globalExcludeListing: boolean;
   setGlobalExcludeListing: (val: boolean) => void;
   createDashboard: () => void;
   onSignOut: () => void;
-  onOpenHelp: () => void;
   hasSession: boolean | null;
   isSampleData: boolean;
   onRenameDashboard: (id: string, name: string) => void;
+  onCloseDashboard: (id: string) => void;
   onOpenDebug: () => void;
   onOpenConfig: () => void;
-  theme: 'light' | 'dark';
+  theme: 'dark' | 'light';
   toggleTheme: () => void;
+  colorScheme: 'blue' | 'green' | 'red' | 'amber' | 'multi';
+  onUpdateColorScheme: (val: 'blue' | 'green' | 'red' | 'amber' | 'multi') => void;
+  onViewLatestData: () => void;
+  isLatestDataOpen: boolean;
 }
 
 export default function Header({
@@ -43,17 +50,41 @@ export default function Header({
   setGlobalExcludeListing,
   createDashboard,
   onSignOut,
-  onOpenHelp,
   hasSession,
   isSampleData,
   onRenameDashboard,
+  onCloseDashboard,
   onOpenDebug,
   onOpenConfig,
   theme,
-  toggleTheme
-}: HeaderProps) {
+  toggleTheme,
+  colorScheme,
+  onUpdateColorScheme,
+  onViewLatestData,
+  isLatestDataOpen,
+  onSaveDashboard,
+  onShareDashboard,
+  onOpenDashboardMenu,
+  autoRefreshInterval,
+  setAutoRefreshInterval
+}: HeaderProps & { 
+  onSaveDashboard: () => void; 
+  onShareDashboard: (email: string) => void; 
+  onOpenDashboardMenu: () => void;
+}) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const [showRefreshMenu, setShowRefreshMenu] = useState(false);
+  const [shareEmail, setShareEmail] = useState('');
+  const [showShareInput, setShowShareInput] = useState(false);
+
+  const refreshOptions = [
+    { label: 'Manual Only', value: null },
+    { label: 'Every 30 minutes', value: 30 },
+    { label: 'Every hour', value: 60 },
+    { label: 'Every 3 hours', value: 180 },
+    { label: 'Every 6 hours', value: 360 },
+  ];
 
   const handleExport = () => {
     try {
@@ -93,21 +124,71 @@ export default function Header({
         </div>
 
         <div className="flex items-center gap-4">
-          <button
-            onClick={handleRefresh}
-            disabled={isRefreshing}
-            className={cn("p-2 rounded transition disabled:opacity-50 mr-1", theme === 'dark' ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-black")}
-            title="Refresh Data"
-          >
-            <RefreshCw className={cn("w-5 h-5", isRefreshing && "animate-spin")} />
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setShowRefreshMenu(!showRefreshMenu)}
+              className={cn(
+                "p-2 rounded transition flex items-center gap-1", 
+                theme === 'dark' ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-black",
+                autoRefreshInterval && "text-blue-500"
+              )}
+              title="Refresh Settings"
+            >
+              <RefreshCw className={cn("w-5 h-5", isRefreshing && "animate-spin")} />
+              {autoRefreshInterval && <span className="text-[9px] font-bold">Auto</span>}
+            </button>
+            
+            <AnimatePresence>
+              {showRefreshMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowRefreshMenu(false)} />
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 10 }}
+                    className="absolute right-0 top-full mt-2 w-48 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-lg shadow-xl py-2 z-50"
+                  >
+                    <div className="px-4 py-2 border-b border-gray-100 dark:border-slate-800">
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Refresh Rate</p>
+                    </div>
+                    <button 
+                      onClick={() => { handleRefresh(); setShowRefreshMenu(false); }}
+                      className="w-full flex items-center gap-3 px-4 py-2 text-xs font-semibold text-gray-700 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition text-left"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span>Refresh Now</span>
+                    </button>
+                    <div className="my-1 border-t border-gray-50 dark:border-slate-800" />
+                    {refreshOptions.map(opt => (
+                      <button
+                        key={opt.label}
+                        onClick={() => {
+                          setAutoRefreshInterval(opt.value);
+                          setShowRefreshMenu(false);
+                        }}
+                        className={cn(
+                          "w-full px-4 py-2 text-xs font-semibold transition text-left flex items-center justify-between",
+                          autoRefreshInterval === opt.value 
+                            ? "text-blue-600 bg-blue-50 dark:bg-blue-900/20" 
+                            : "text-gray-700 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800"
+                        )}
+                      >
+                        <span>{opt.label}</span>
+                        {autoRefreshInterval === opt.value && <Check className="w-3 h-3" />}
+                      </button>
+                    ))}
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
+          </div>
 
           <button
-            onClick={onOpenHelp}
+            onClick={toggleTheme}
             className={cn("p-2 rounded transition mr-2", theme === 'dark' ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-black")}
-            title="Help & Resources"
+            title={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
           >
-            <HelpCircle className="w-5 h-5" />
+            {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
           </button>
 
           <button
@@ -156,12 +237,29 @@ export default function Header({
 
               <div className="py-1">
                 <button 
-                  onClick={toggleTheme}
+                  onClick={onOpenDashboardMenu}
                   className="w-full flex items-center gap-3 px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-100 transition text-left"
                 >
-                  {theme === 'light' ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
-                  <span>{theme === 'light' ? 'Dark Mode' : 'Light Mode'}</span>
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                  <span>Open Dashboard</span>
                 </button>
+                <button 
+                  onClick={onSaveDashboard}
+                  className="w-full flex items-center gap-3 px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-100 transition text-left"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Save Dashboard</span>
+                </button>
+                <button 
+                  onClick={() => setShowShareInput(!showShareInput)}
+                  className="w-full flex items-center gap-3 px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-100 transition text-left"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span>Share Dashboard</span>
+                </button>
+
+                <div className="my-1 border-t border-gray-50" />
+
                 <button 
                   onClick={onOpenConfig}
                   className="w-full flex items-center gap-3 px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-100 transition text-left"
@@ -170,29 +268,64 @@ export default function Header({
                   <span>Configure</span>
                 </button>
                 <button 
-                  onClick={handleExport}
+                  onClick={onViewLatestData}
                   className="w-full flex items-center gap-3 px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-100 transition text-left"
                 >
                   <FileText className="w-3.5 h-3.5" />
-                  <span>Export to PDF</span>
+                  <span>View Latest Data</span>
                 </button>
-                <button 
-                  onClick={handleShare}
-                  className="w-full flex items-center gap-3 px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-100 transition text-left"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Share Dashboard</span>
-                </button>
+
+                {/* Global Color Selector */}
+                <div className="px-4 py-2">
+                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-2">Global Color</p>
+                  <div className="flex gap-2">
+                    {[
+                      { id: 'blue', color: 'bg-blue-500' },
+                      { id: 'green', color: 'bg-green-500' },
+                      { id: 'red', color: 'bg-red-500' },
+                      { id: 'amber', color: 'bg-amber-500' },
+                      { id: 'multi', color: 'bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500' }
+                    ].map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => onUpdateColorScheme(c.id as any)}
+                        className={cn(
+                          "w-5 h-5 rounded-full transition-all flex items-center justify-center",
+                          c.color,
+                          colorScheme === c.id ? "ring-2 ring-offset-2 ring-black dark:ring-white scale-110" : "opacity-70 hover:opacity-100"
+                        )}
+                        title={c.id}
+                      >
+                        {colorScheme === c.id && <div className="w-1 h-1 bg-white rounded-full shadow-sm"></div>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {showShareInput && (
+                  <div className="px-4 py-2 bg-gray-50 border-y border-gray-100">
+                    <input 
+                      type="email" 
+                      placeholder="User email..."
+                      value={shareEmail}
+                      onChange={(e) => setShareEmail(e.target.value)}
+                      className="w-full px-2 py-1.5 text-[10px] border border-gray-200 rounded mb-2 outline-none focus:border-black"
+                    />
+                    <button 
+                      onClick={() => {
+                        onShareDashboard(shareEmail);
+                        setShareEmail('');
+                        setShowShareInput(false);
+                      }}
+                      className="w-full bg-black text-white py-1.5 rounded text-[9px] font-bold uppercase tracking-widest"
+                    >
+                      Grant Access
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="border-t border-gray-100 pt-1">
-                <button 
-                  onClick={onOpenDebug}
-                  className="w-full flex items-center gap-3 px-4 py-2 text-xs font-semibold text-blue-600 hover:bg-blue-50 transition text-left"
-                >
-                  <Terminal className="w-3.5 h-3.5" />
-                  <span>Review Data Sources</span>
-                </button>
                 <button 
                   onClick={onSignOut}
                   className="w-full flex items-center gap-3 px-4 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 transition text-left"
@@ -211,7 +344,7 @@ export default function Header({
         theme === 'dark' ? "bg-slate-950 border-slate-800" : "bg-white border-gray-100"
       )}>
         {dashboards.map(dashboard => (
-          <div key={dashboard.id} className="relative h-full flex items-center min-w-fit">
+          <div key={dashboard.id} className="relative h-full flex items-center min-w-fit group">
             {editingId === dashboard.id ? (
               <input
                 autoFocus
@@ -250,8 +383,48 @@ export default function Header({
                 {dashboard.name}
               </button>
             )}
+            {activeDashboardId === dashboard.id && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onCloseDashboard(dashboard.id); }}
+                className={cn(
+                  "absolute right-1 p-1 rounded-full opacity-0 group-hover:opacity-100 transition hover:bg-gray-200 dark:hover:bg-slate-800",
+                  theme === 'dark' ? "text-slate-400" : "text-gray-400"
+                )}
+                title="Close Dashboard"
+              >
+                <X className="w-2.5 h-2.5" />
+              </button>
+            )}
           </div>
         ))}
+        
+        {isLatestDataOpen && (
+          <div className="relative h-full flex items-center min-w-fit group">
+            <button
+              onClick={() => setActiveDashboardId('latest-data')}
+              className={cn(
+                "px-6 h-full flex items-center text-[11px] font-bold uppercase tracking-widest transition relative",
+                activeDashboardId === 'latest-data'
+                  ? (theme === 'dark' ? "text-white border-b-2 border-white" : "text-black border-b-2 border-black")
+                  : (theme === 'dark' ? "text-slate-500 hover:text-white border-b-2 border-transparent" : "text-gray-400 hover:text-black border-b-2 border-transparent")
+              )}
+            >
+              Latest Data
+            </button>
+            {activeDashboardId === 'latest-data' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onCloseDashboard('latest-data'); }}
+                className={cn(
+                  "absolute right-1 p-1 rounded-full opacity-0 group-hover:opacity-100 transition hover:bg-gray-200 dark:hover:bg-slate-800",
+                  theme === 'dark' ? "text-slate-400" : "text-gray-400"
+                )}
+                title="Close Tab"
+              >
+                <X className="w-2.5 h-2.5" />
+              </button>
+            )}
+          </div>
+        )}
         <button
           onClick={createDashboard}
           className={cn("px-4 transition", theme === 'dark' ? "text-slate-700 hover:text-white" : "text-gray-300 hover:text-black")}

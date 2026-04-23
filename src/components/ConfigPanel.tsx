@@ -36,6 +36,7 @@ export default function ConfigPanel({
     { type: 'line', icon: LineChart, label: 'Line', info: 'Best for visualizing trends and volume changes over continuous time windows.' },
     { type: 'pie', icon: PieChart, label: 'Pie', info: 'Shows the relative proportion of parts to the whole (e.g., status distribution).' },
     { type: 'leaderboard', icon: Trophy, label: 'Rank', info: 'A sorted list showing the top performers based on the current data slice.' },
+    { type: 'days', icon: Calendar, label: 'Days', info: 'Segment items based on their age in the system (Submitted to Today or Reviewed).' },
     { type: 'table', icon: TableIcon, label: 'Table', info: 'Provides a detailed list of all records matching your filter criteria.' },
   ];
 
@@ -139,6 +140,83 @@ export default function ConfigPanel({
                 </div>
 
                 <div className="space-y-5">
+                  {card.vizType === 'days' && (
+                    <div className="space-y-5 p-4 bg-gray-50 dark:bg-slate-900 rounded-lg">
+                      <div>
+                        <div className="flex items-center mb-2">
+                          <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Calculation Base</span>
+                        </div>
+                        <div className="flex flex-col gap-2">
+                          {[
+                            { id: 'active_age', label: 'Current Age (to Today)' },
+                            { id: 'processing_time', label: 'Review Time (to Reviewed)' }
+                          ].map((m) => (
+                            <button
+                              key={m.id}
+                              onClick={() => updateFilters({ daysCalculation: m.id as any })}
+                              className={cn(
+                                "w-full px-3 py-2 rounded text-[9px] font-bold uppercase tracking-widest border transition text-left",
+                                (card.filters.daysCalculation || 'active_age') === m.id
+                                  ? "bg-blue-600 text-white border-blue-600"
+                                  : "bg-white dark:bg-slate-950 text-gray-400 border-gray-200 dark:border-slate-800"
+                              )}
+                            >
+                              {m.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Min Days</label>
+                          <input 
+                            type="number" 
+                            value={card.filters.daysRangeMin ?? ''}
+                            onChange={(e) => updateFilters({ daysRangeMin: e.target.value ? parseInt(e.target.value) : null })}
+                            className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-gray-200 dark:border-slate-800 rounded text-xs"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Max Days</label>
+                          <input 
+                            type="number" 
+                            value={card.filters.daysRangeMax ?? ''}
+                            onChange={(e) => updateFilters({ daysRangeMax: e.target.value ? parseInt(e.target.value) : null })}
+                            className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-gray-200 dark:border-slate-800 rounded text-xs"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {card.vizType === 'leaderboard' && (
+                    <div>
+                      <div className="flex items-center mb-2">
+                        <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Rank Field</span>
+                        <Tooltip text="Choose which field to use for the primary axis of your ranking." />
+                      </div>
+                      <div className="flex gap-2">
+                        {[
+                          { id: 'reviewer', label: 'Reviewer' },
+                          { id: 'developer', label: 'Developer' }
+                        ].map((f) => (
+                          <button
+                            key={f.id}
+                            onClick={() => updateFilters({ rankField: f.id as any })}
+                            className={cn(
+                              "flex-1 px-3 py-2 rounded text-[9px] font-bold uppercase tracking-widest border transition",
+                              (card.filters.rankField || 'reviewer') === f.id
+                                ? "bg-black text-white border-black dark:bg-white dark:text-black dark:border-white"
+                                : "bg-white dark:bg-slate-900 text-gray-400 border-gray-100 dark:border-slate-800 hover:border-gray-300"
+                            )}
+                          >
+                            {f.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div>
                     <div className="flex items-center mb-2">
                       <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Status</span>
@@ -168,35 +246,131 @@ export default function ConfigPanel({
                   </div>
 
                   <div>
-                    <div className="flex items-center mb-2">
-                      <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Date Range</span>
-                      <Tooltip text="Filters the data based on the submission or review date within this specified window." />
+                    <div className="flex items-center mb-4 border-b border-gray-50 dark:border-slate-900 pb-2">
+                       <Calendar className="w-3.5 h-3.5 text-black dark:text-white mr-2" />
+                       <span className="text-[11px] font-bold text-black dark:text-white uppercase tracking-widest">Temporal Filters</span>
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {[
-                        { id: 'today', label: 'Today' },
-                        { id: 'yesterday', label: 'Yesterday' },
-                        { id: 'past_30', label: 'Past 30 Days' },
-                        { id: 'past_60', label: 'Past 60 Days' },
-                        { id: 'past_90', label: 'Past 90 Days' },
-                        { id: 'past_120', label: 'Past 120 Days' },
-                        { id: 'past_365', label: 'Past 365 Days' },
-                        { id: 'this_year', label: 'This Year' },
-                        { id: 'all_time', label: 'All Time' }
-                      ].map((p) => (
-                        <button
-                          key={p.id}
-                          onClick={() => updateFilters({ period: p.id })}
-                          className={cn(
-                            "px-3 py-2 rounded text-[9px] font-bold uppercase tracking-widest border transition",
-                            card.filters.period === p.id 
-                              ? "bg-black text-white border-black dark:bg-white dark:text-black dark:border-white" 
-                              : "bg-white dark:bg-slate-900 text-gray-400 border-gray-100 dark:border-slate-800 hover:border-gray-300"
-                          )}
-                        >
-                          {p.label}
-                        </button>
-                      ))}
+
+                    <div className="space-y-6">
+                      {/* Submited Range */}
+                      <div>
+                        <div className="flex items-center mb-2">
+                          <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Date Submitted</span>
+                          <Tooltip text="Filters based on when the extension was submitted." />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {[
+                            { id: 'today', label: 'Today' },
+                            { id: 'yesterday', label: 'Yesterday' },
+                            { id: 'past_30', label: 'Past 30' },
+                            { id: 'past_90', label: 'Past 90' },
+                            { id: 'this_year', label: 'This Year' },
+                            { id: 'all_time', label: 'All Time' }
+                          ].map((p) => (
+                            <button
+                              key={p.id}
+                              onClick={() => updateFilters({ submittedPeriod: p.id })}
+                              className={cn(
+                                "px-3 py-2 rounded text-[9px] font-bold uppercase tracking-widest border transition",
+                                card.filters.submittedPeriod === p.id 
+                                  ? "bg-black text-white border-black dark:bg-white dark:text-black dark:border-white" 
+                                  : "bg-white dark:bg-slate-900 text-gray-400 border-gray-100 dark:border-slate-800 hover:border-gray-300"
+                              )}
+                            >
+                              {p.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                       {/* Reviewed Range */}
+                      <div>
+                        <div className="flex items-center mb-2">
+                          <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Last Reviewed</span>
+                          <Tooltip text="Filters based on when the extension was last reviewed." />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {[
+                            { id: 'today', label: 'Today' },
+                            { id: 'yesterday', label: 'Yesterday' },
+                            { id: 'past_30', label: 'Past 30' },
+                            { id: 'past_90', label: 'Past 90' },
+                            { id: 'this_year', label: 'This Year' },
+                            { id: 'all_time', label: 'All Time' }
+                          ].map((p) => (
+                            <button
+                              key={p.id}
+                              onClick={() => updateFilters({ reviewedPeriod: p.id })}
+                              className={cn(
+                                "px-3 py-2 rounded text-[9px] font-bold uppercase tracking-widest border transition",
+                                card.filters.reviewedPeriod === p.id 
+                                  ? "bg-black text-white border-black dark:bg-white dark:text-black dark:border-white" 
+                                  : "bg-white dark:bg-slate-900 text-gray-400 border-gray-100 dark:border-slate-800 hover:border-gray-300"
+                              )}
+                            >
+                              {p.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Primary Axis */}
+                      <div>
+                        <div className="flex items-center mb-2">
+                          <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Primary Axis Field</span>
+                          <Tooltip text="The date field used for the X-axis in charts and for the grouping logic." />
+                        </div>
+                        <div className="flex gap-2">
+                          {[
+                            { id: 'dateSubmitted', label: 'Submitted' },
+                            { id: 'dateReviewed', label: 'Reviewed' }
+                          ].map((f) => (
+                            <button
+                              key={f.id}
+                              onClick={() => updateFilters({ dateField: f.id })}
+                              className={cn(
+                                "flex-1 px-3 py-2 rounded text-[9px] font-bold uppercase tracking-widest border transition",
+                                card.filters.dateField === f.id
+                                  ? "bg-blue-600 text-white border-blue-600"
+                                  : "bg-white dark:bg-slate-900 text-gray-400 border-gray-100 dark:border-slate-800 hover:border-gray-300"
+                              )}
+                            >
+                              {f.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center mb-2">
+                      <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Duplicates</span>
+                      <Tooltip text="Toggle between showing all records or only the latest unique record per extension." />
+                    </div>
+                    <div className="flex gap-2">
+                       <button
+                        onClick={() => updateFilters({ uniqueOnly: false })}
+                        className={cn(
+                          "flex-1 px-3 py-2 rounded text-[9px] font-bold uppercase tracking-widest border transition",
+                          !card.filters.uniqueOnly
+                            ? "bg-black text-white border-black dark:bg-white dark:text-black dark:border-white"
+                            : "bg-white dark:bg-slate-900 text-gray-400 border-gray-100 dark:border-slate-800 hover:border-gray-300"
+                        )}
+                      >
+                        Show All
+                      </button>
+                      <button
+                        onClick={() => updateFilters({ uniqueOnly: true })}
+                        className={cn(
+                          "flex-1 px-3 py-2 rounded text-[9px] font-bold uppercase tracking-widest border transition",
+                          card.filters.uniqueOnly
+                            ? "bg-black text-white border-black dark:bg-white dark:text-black dark:border-white"
+                            : "bg-white dark:bg-slate-900 text-gray-400 border-gray-100 dark:border-slate-800 hover:border-gray-300"
+                        )}
+                      >
+                        Unique Only
+                      </button>
                     </div>
                   </div>
 
@@ -304,9 +478,9 @@ export default function ConfigPanel({
             <div className="mt-auto p-8 border-t border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50">
               <button 
                 onClick={onClose}
-                className="w-full bg-black dark:bg-white text-white dark:text-black py-4 rounded text-xs font-bold uppercase tracking-widest hover:bg-gray-800 dark:hover:bg-gray-200 transition transform active:scale-95"
+                className="w-full bg-black dark:bg-white text-white dark:text-black py-3 rounded text-xs font-bold uppercase tracking-widest hover:bg-gray-800 dark:hover:bg-gray-200 transition transform active:scale-95 shadow-lg"
               >
-                Apply Manifest
+                Apply
               </button>
             </div>
           </motion.aside>

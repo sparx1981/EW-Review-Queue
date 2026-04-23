@@ -14,17 +14,33 @@ export interface UserProfile {
   };
 }
 
-export type VizType = 'kpi' | 'bar' | 'line' | 'pie' | 'leaderboard' | 'table';
+export type VizType = 'kpi' | 'bar' | 'line' | 'pie' | 'leaderboard' | 'table' | 'days';
 
 export interface CardFilters {
-  status: string[]; // Changed to array for multi-select
-  dateField: 'submittedAt' | 'reviewedAt';
-  period: 'today' | 'yesterday' | 'past_30' | 'past_60' | 'past_90' | 'past_120' | 'past_365' | 'this_week' | 'this_month' | 'this_year' | 'all_time' | 'custom';
-  customFrom: string | null;
-  customTo: string | null;
-  excludeListingPages: boolean; // Keep for backward compatibility or remove later
+  status: string[];
+  submittedPeriod: 'today' | 'yesterday' | 'past_30' | 'past_60' | 'past_90' | 'past_120' | 'past_365' | 'this_week' | 'this_month' | 'this_year' | 'all_time' | 'custom';
+  submittedFrom: string | null;
+  submittedTo: string | null;
+  reviewedPeriod: 'today' | 'yesterday' | 'past_30' | 'past_60' | 'past_90' | 'past_120' | 'past_365' | 'this_week' | 'this_month' | 'this_year' | 'all_time' | 'custom';
+  reviewedFrom: string | null;
+  reviewedTo: string | null;
+  dateField: 'dateSubmitted' | 'dateReviewed'; // The primary field used for charts/grouping
   listingPageMode: 'only' | 'exclude' | 'both'; 
   reviewerIds: string[];
+  rankField: 'reviewer' | 'developer';
+  uniqueOnly?: boolean;
+  
+  // Days format specific
+  daysCalculation?: 'active_age' | 'processing_time';
+  daysRangeMin?: number | null;
+  daysRangeMax?: number | null;
+
+  // Legacy fields (optional migration)
+  dataset?: 'active' | 'completed';
+  period?: string;
+  customFrom?: string | null;
+  customTo?: string | null;
+  excludeListingPages?: boolean;
 }
 
 export interface CardComparison {
@@ -61,18 +77,26 @@ export interface DashboardLayout {
 export interface Dashboard {
   id: string;
   name: string;
+  ownerId: string;
+  collaborators: string[]; // array of emails
   createdAt: any;
   updatedAt: any;
   order: number;
   layout: DashboardLayout;
+  colorScheme?: 'blue' | 'green' | 'red' | 'amber' | 'multi';
+}
+
+export interface SourceConfig {
+  name: string;
+  url: string;
 }
 
 export interface EWReview {
   id: string;
   extensionName: string;
   status: string;
-  submittedAt: string | null;
-  reviewedAt: string | null;
+  dateSubmitted: number; // Always present Unix timestamp in ms
+  dateReviewed: number | null; // Not always present
   reviewerName: string | null;
   isListingPage: boolean;
   version: string | null;

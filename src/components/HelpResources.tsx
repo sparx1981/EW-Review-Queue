@@ -117,7 +117,13 @@ export default function HelpResources({ isOpen, onClose }: HelpResourcesProps) {
                         >
                           {copiedId === doc.id ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
                         </button>
-                        <button className="absolute bottom-4 right-4 px-3 py-1 bg-blue-600 text-white text-[10px] font-bold rounded-md hover:bg-blue-700 transition">
+                        <button 
+                          onClick={() => {
+                            console.info(`[TRY IT] Executing snippet: ${doc.title}`);
+                            console.log(doc.code);
+                          }}
+                          className="absolute bottom-4 right-4 px-3 py-1 bg-blue-600 text-white text-[10px] font-bold rounded-md hover:bg-blue-700 transition"
+                        >
                           TRY IT
                         </button>
                       </div>

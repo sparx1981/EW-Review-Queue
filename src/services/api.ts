@@ -1,24 +1,24 @@
 import dayjs from 'dayjs';
-import { EWReview } from '../types';
-import { getSessionCookie } from './dataStore';
+import { EWReview, SourceConfig } from '../types';
+import { getSessionCookie, getSourceUrls } from './dataStore';
 
 const FIELD_MAP: Record<keyof EWReview, string[]> = {
   id: ['id', 'extensionId', 'extension_id'],
-  extensionName: ['name', 'extensionName', 'extension_name', 'title'],
+  extensionName: ['extension.title', 'name', 'extensionName', 'extension_name', 'title'],
   status: ['status', 'reviewStatus', 'review_status', 'state', 'review_queue_status', 'current_status'],
-  submittedAt: ['submittedAt', 'submitted_at', 'createdAt', 'created_at', 'dateSubmitted'],
-  reviewedAt: ['reviewedAt', 'reviewed_at', 'updatedAt', 'updated_at', 'lastReviewed'],
-  reviewerName: ['reviewer.name', 'reviewerName', 'reviewer_name'],
+  dateSubmitted: ['submittedAt', 'submitted_at', 'createdAt', 'created_at', 'dateSubmitted'],
+  dateReviewed: ['reviewedAt', 'reviewed_at', 'updatedAt', 'updated_at', 'lastReviewed', 'dateReviewed'],
+  reviewerName: ['reviewer.name', 'reviewer', 'reviewerName', 'reviewer_name'],
   isListingPage: ['listingPage', 'listing_page', 'isListing', 'is_listing'],
   version: ['version', 'versionNumber', 'version_number'],
   developer: ['developer', 'developerName', 'developer_name', 'author'],
 };
 
 const STATUS_MAP: Record<string, string[]> = {
-  approved: ['approved', 'accepted', 'published', 'live', 'active', 'passed'],
-  denied: ['denied', 'rejected', 'refused', 'declined', 'removed', 'failed'],
-  in_queue: ['in_queue', 'inqueue', 'queued', 'pending', 'submitted', 'in queue', 'waiting'],
-  in_review: ['in_review', 'inreview', 'reviewing', 'under_review', 'in review', 'under review'],
+  approved: ['approved', 'accepted', 'published', 'live', 'active', 'passed', 'complete', 'completed', 'verified', 'passed'],
+  denied: ['denied', 'rejected', 'refused', 'declined', 'removed', 'failed', 'vetoed', 'returned', 'rejected'],
+  in_queue: ['in_queue', 'inqueue', 'queued', 'pending', 'submitted', 'in queue', 'waiting', 'unassigned'],
+  in_review: ['in_review', 'inreview', 'reviewing', 'under_review', 'in review', 'under review', 'processing'],
 };
 
 const LISTING_PAGE_REGEX = /^(listing|showcase|collection|bundle)/i;
@@ -81,12 +81,20 @@ export function extractRecordsFromResponse(json: any): any[] {
 export function normalizeReview(raw: any): EWReview {
   const extensionName = resolveField(raw, FIELD_MAP.extensionName) || 'Unknown Extension';
   const isListingFlag = !!resolveField(raw, FIELD_MAP.isListingPage);
+  
+  const subRaw = resolveField(raw, FIELD_MAP.dateSubmitted);
+  const revRaw = resolveField(raw, FIELD_MAP.dateReviewed);
+  
+  // Convert to number (Unix Millisecond Timestamp)
+  const dateSubmitted = subRaw ? (typeof subRaw === 'number' ? subRaw : dayjs(subRaw).valueOf()) : Date.now();
+  const dateReviewed = revRaw ? (typeof revRaw === 'number' ? revRaw : dayjs(revRaw).valueOf()) : null;
+
   return {
     id: String(resolveField(raw, FIELD_MAP.id) || Math.random().toString(36).substr(2, 9)),
     extensionName,
     status: normalizeStatus(resolveField(raw, FIELD_MAP.status)),
-    submittedAt: resolveField(raw, FIELD_MAP.submittedAt),
-    reviewedAt: resolveField(raw, FIELD_MAP.reviewedAt),
+    dateSubmitted,
+    dateReviewed,
     reviewerName: resolveField(raw, FIELD_MAP.reviewerName),
     isListingPage: isListingFlag || LISTING_PAGE_REGEX.test(extensionName),
     version: resolveField(raw, FIELD_MAP.version),
@@ -133,13 +141,15 @@ export interface ConnectionTestResult {
 export async function testApiConnection(authHeader?: string): Promise<ConnectionTestResult> {
   const hasCookie = !!getSessionCookie() || !!authHeader?.trim();
   const headers = buildHeaders(authHeader);
+  const sources = getSourceUrls();
+  const testUrl = sources.length > 0 ? sources[0].url : '/api/sketchup/reviews?completedOnly=false';
 
   if (!hasCookie) {
     return { ok: false, status: null, statusText: 'No cookie', hasCookie: false, errorType: 'auth', detail: 'No session cookie provided. Paste your cookie from the DevTools Network tab.' };
   }
 
   try {
-    const response = await fetch('/api/sketchup/reviews?completedOnly=false', {
+    const response = await fetch(testUrl, {
       method: 'GET',
       headers,
     });
@@ -202,6 +212,40 @@ export async function testApiConnection(authHeader?: string): Promise<Connection
   }
 }
 
+export async function validateSourceUrl(url: string, authHeader?: string): Promise<ConnectionTestResult> {
+  const headers = buildHeaders(authHeader);
+
+  try {
+    const response = await fetch(url, { headers });
+
+    if (response.status === 401 || response.status === 403) {
+      return { ok: false, status: response.status, statusText: response.statusText, hasCookie: true, errorType: 'auth', detail: 'Authentication failed. Check your cookie.' };
+    }
+
+    if (!response.ok) {
+       return { ok: false, status: response.status, statusText: response.statusText, hasCookie: true, errorType: 'server', detail: `Server returned ${response.status} ${response.statusText}.` };
+    }
+
+    const rawText = await response.text();
+    const trimmedRaw = rawText.trim();
+
+    const isHtml = trimmedRaw.startsWith('<') || trimmedRaw.toLowerCase().includes('<!doctype') || trimmedRaw.toLowerCase().includes('<html');
+    if (isHtml) {
+      return { ok: false, status: response.status, statusText: 'HTML response', hasCookie: true, errorType: 'wrong_cookie', detail: 'Endpoint returned HTML instead of JSON. Ensure you are copying the correct URL and have a valid session.', rawResponse: trimmedRaw.slice(0, 400) };
+    }
+
+    try {
+      const json = JSON.parse(trimmedRaw);
+      const records = extractRecordsFromResponse(json);
+      return { ok: true, status: response.status, statusText: 'Valid', hasCookie: true, errorType: 'none', detail: `Success! ${records.length} records found.` };
+    } catch {
+       return { ok: false, status: response.status, statusText: 'Invalid JSON', hasCookie: true, errorType: 'server', detail: 'Response is not valid JSON.', rawResponse: trimmedRaw.slice(0, 400) };
+    }
+  } catch (e: any) {
+    return { ok: false, status: null, statusText: 'Network Error', hasCookie: true, errorType: 'network', detail: e?.message || 'Failed to fetch the URL.' };
+  }
+}
+
 export function generateSampleData(days = 400): EWReview[] {
   const data: EWReview[] = [];
   const reviewers = ['Alex K.', 'Priya N.', 'Tom W.', 'Sarah C.', 'Marcus L.'];
@@ -226,8 +270,8 @@ export function generateSampleData(days = 400): EWReview[] {
         id,
         extensionName: isListing ? `Collection ${v}` : `Extension ${v}-${i}`,
         status,
-        submittedAt: date.toISOString(),
-        reviewedAt: status !== 'in_queue' ? date.add(2, 'hour').toISOString() : null,
+        dateSubmitted: date.valueOf(),
+        dateReviewed: status !== 'in_queue' ? date.add(2, 'hour').valueOf() : null,
         reviewerName: status !== 'in_queue' ? reviewer : null,
         isListingPage: isListing,
         version: '1.0.' + v,
@@ -240,11 +284,7 @@ export function generateSampleData(days = 400): EWReview[] {
 
 export async function probeAndFetch(authHeader?: string): Promise<{ data: EWReview[], isSample: boolean, rawPayload?: any }> {
   const headers = buildHeaders(authHeader);
-
-  const sources = [
-    { name: 'Active Reviews', url: '/api/sketchup/reviews?completedOnly=false' },
-    { name: 'Completed Reviews', url: '/api/sketchup/reviews?completedOnly=true' },
-  ];
+  const sources = getSourceUrls();
 
   let rawPayload: any = { sources: [] };
   const errorLogs: string[] = [];
@@ -285,6 +325,14 @@ export async function probeAndFetch(authHeader?: string): Promise<{ data: EWRevi
     }));
 
     combinedData = results.flat();
+
+    // Deduplicate records by ID
+    const seenIds = new Set<string>();
+    combinedData = combinedData.filter(item => {
+      if (seenIds.has(item.id)) return false;
+      seenIds.add(item.id);
+      return true;
+    });
 
     // If at least one source responded with HTTP 200 (even an empty array), treat this as live data
     const anySourceSucceeded = rawPayload.sources.some((s: any) => s.status === 'success');
