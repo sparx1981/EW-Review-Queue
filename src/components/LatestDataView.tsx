@@ -282,8 +282,8 @@ export default function LatestDataView({ data, onOpenDataSources, theme }: Lates
                   </td>
                 </tr>
               ) : (
-                filteredData.map((item) => (
-                  <tr key={item.id} className={cn("hover:bg-gray-50/50 dark:hover:bg-slate-900/50 transition", theme === 'dark' ? "text-slate-300" : "text-gray-700")}>
+                filteredData.map((item, idx) => (
+                  <tr key={`${item.id}-${idx}`} className={cn("hover:bg-gray-50/50 dark:hover:bg-slate-900/50 transition", theme === 'dark' ? "text-slate-300" : "text-gray-700")}>
                     <td className="p-4 text-xs font-semibold">
                       <div className="flex flex-col">
                         <span>{item.extensionName}</span>

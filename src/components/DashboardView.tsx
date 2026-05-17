@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { User } from 'firebase/auth';
-import { collection, query, orderBy, onSnapshot, db, doc, setDoc, updateDoc, serverTimestamp, auth, signOut, where, or } from '../services/firebase';
+import { collection, query, orderBy, onSnapshot, db, doc, setDoc, updateDoc, deleteDoc, serverTimestamp, auth, signOut, where, or } from '../services/firebase';
 import { Dashboard, EWReview, CardConfig, DashboardRow } from '../types';
 import Header from './Header';
 import Card from './Card';
@@ -10,7 +10,7 @@ import LatestDataView from './LatestDataView';
 import { probeAndFetch, testApiConnection } from '../services/api';
 import { v4 as uuidv4 } from 'uuid';
 import Sortable from 'sortablejs';
-import { Plus, LayoutGrid, Terminal, X, Copy, Check } from 'lucide-react';
+import { Plus, LayoutGrid, Terminal, X, Copy, Check, Trash2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -80,6 +80,8 @@ const DEFAULT_CARD: (title: string, type: CardConfig['vizType']) => CardConfig =
   id: uuidv4(),
   title,
   vizType: type,
+  w: 1,
+  h: 1,
   filters: {
     status: [],
     dateField: 'dateSubmitted',
@@ -130,8 +132,17 @@ export default function DashboardView({ user }: DashboardViewProps) {
   const [autoRefreshInterval, setAutoRefreshInterval] = useState<number | null>(null);
   const [isOpenDashboardOpen, setIsOpenDashboardOpen] = useState(false);
   const [isLatestDataOpen, setIsLatestDataOpen] = useState(false);
+  const [openDashboardIds, setOpenDashboardIds] = useState<string[]>(() => {
+    const saved = localStorage.getItem('ew_open_dashboard_ids');
+    return saved ? JSON.parse(saved) : [];
+  });
 
   const rowRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
+  const initialLoadRef = useRef(true);
+
+  useEffect(() => {
+    localStorage.setItem('ew_open_dashboard_ids', JSON.stringify(openDashboardIds));
+  }, [openDashboardIds]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -180,9 +191,24 @@ export default function DashboardView({ user }: DashboardViewProps) {
       });
       const allDocs = Array.from(uniqueDocs.values());
       setDashboards(allDocs);
-      if (allDocs.length > 0 && !activeDashboardId) {
-        setActiveDashboardId(allDocs[0].id);
-      }
+      
+      // Sync openDashboardIds with actually existing docs
+      setOpenDashboardIds(prev => prev.filter(id => uniqueDocs.has(id)));
+
+      // Fix: Only auto-select first dashboard on initial load if none active
+      setActiveDashboardId(prev => {
+        if (allDocs.length > 0 && !prev && initialLoadRef.current) {
+          initialLoadRef.current = false;
+          // Also add to openDashboardIds if we are auto-selecting
+          setOpenDashboardIds([allDocs[0].id]);
+          return allDocs[0].id;
+        }
+        // If the active dashboard was deleted, select first available or null
+        if (prev && !allDocs.find(d => d.id === prev)) {
+          return allDocs.length > 0 ? allDocs[0].id : null;
+        }
+        return prev;
+      });
     });
 
     handleRefresh();
@@ -190,12 +216,13 @@ export default function DashboardView({ user }: DashboardViewProps) {
   }, [user.uid, user.email, authHeader]);
 
   useEffect(() => {
+    const instances: any[] = [];
     if (isEditMode && activeDashboardId) {
       const current = dashboards.find(d => d.id === activeDashboardId);
       current?.layout.rows.forEach(row => {
         const el = rowRefs.current[row.id];
         if (el) {
-          Sortable.create(el, {
+          const s = Sortable.create(el, {
             group: 'cards',
             animation: 150,
             handle: '.drag-handle',
@@ -206,9 +233,13 @@ export default function DashboardView({ user }: DashboardViewProps) {
               }
             }
           });
+          instances.push(s);
         }
       });
     }
+    return () => {
+      instances.forEach(instance => instance.destroy());
+    };
   }, [isEditMode, activeDashboardId, dashboards]);
 
   const handleDragEnd = (fromRowId: string, toRowId: string, oldIndex: number, newIndex: number) => {
@@ -220,7 +251,11 @@ export default function DashboardView({ user }: DashboardViewProps) {
     const toRow = newRows.find(r => r.id === toRowId);
 
     if (fromRow && toRow) {
-      const [movedCard] = fromRow.cards.splice(oldIndex, 1);
+      // Safety check: ensure movedCard is not undefined
+      const movedCard = fromRow.cards[oldIndex];
+      if (!movedCard) return;
+
+      fromRow.cards.splice(oldIndex, 1);
       toRow.cards.splice(newIndex, 0, movedCard);
       updateDashboardLayout(activeDashboardId!, { rows: newRows });
     }
@@ -266,7 +301,7 @@ export default function DashboardView({ user }: DashboardViewProps) {
   const deleteCard = async (rowId: string, cardId: string) => {
     if (!activeDashboardId || !activeDashboard) return;
     const newRows = activeDashboard.layout.rows.map(row => 
-      row.id === rowId ? { ...row, cards: row.cards.filter(c => c.id !== cardId) } : row
+      row.id === rowId ? { ...row, cards: row.cards.filter(c => c && c.id !== cardId) } : row
     );
     await updateDashboardLayout(activeDashboardId, { rows: newRows });
     if (selectedCardId === cardId) setSelectedCardId(null);
@@ -277,7 +312,7 @@ export default function DashboardView({ user }: DashboardViewProps) {
     const newRows = activeDashboard.layout.rows.map(row => 
       row.id === rowId ? {
         ...row,
-        cards: row.cards.map(c => c.id === cardId ? { ...c, ...config } : c)
+        cards: row.cards.map(c => (c && c.id === cardId) ? { ...c, ...config } : c)
       } : row
     );
     await updateDashboardLayout(activeDashboardId, { rows: newRows });
@@ -301,15 +336,36 @@ export default function DashboardView({ user }: DashboardViewProps) {
       setIsLatestDataOpen(false);
       return;
     }
-    if (activeDashboardId === id && isDirty) {
+    if (isDirty) {
       const save = window.confirm('You have unsaved changes. Would you like to save before closing?');
       if (save) {
         await saveDashboard();
       }
     }
+    
+    setOpenDashboardIds(prev => {
+      const filtered = prev.filter(oid => oid !== id);
+      if (activeDashboardId === id) {
+        setActiveDashboardId(filtered.length > 0 ? filtered[filtered.length - 1] : null);
+      }
+      return filtered;
+    });
+
     if (activeDashboardId === id) {
-      setActiveDashboardId(null);
       setIsDirty(false);
+    }
+  };
+
+  const deleteDashboard = async (id: string) => {
+    if (window.confirm('Are you sure you want to delete this dashboard? This cannot be undone.')) {
+      try {
+        await deleteDoc(doc(db, 'dashboards', id));
+        if (activeDashboardId === id) {
+          setActiveDashboardId(null);
+        }
+      } catch (error) {
+        console.error("Error deleting dashboard:", error);
+      }
     }
   };
 
@@ -327,6 +383,17 @@ export default function DashboardView({ user }: DashboardViewProps) {
     }
   };
 
+  const revokeDashboardAccess = async (email: string) => {
+    if (!activeDashboardId || !activeDashboard) return;
+    const colabs = activeDashboard.collaborators || [];
+    const newColabs = colabs.filter(e => e !== email);
+    await updateDoc(doc(db, 'dashboards', activeDashboardId), {
+      collaborators: newColabs,
+      updatedAt: serverTimestamp()
+    });
+    alert(`Access revoked for ${email}`);
+  };
+
   const createDashboard = async () => {
     const id = uuidv4();
     const newDoc: Dashboard = {
@@ -335,6 +402,7 @@ export default function DashboardView({ user }: DashboardViewProps) {
       layout: { rows: [{ id: uuidv4(), cards: [DEFAULT_CARD('Volume', 'bar')] }] }
     };
     await setDoc(doc(db, 'dashboards', id), newDoc);
+    setOpenDashboardIds(prev => [...prev, id]);
     setActiveDashboardId(id);
     setIsEditMode(true);
   };
@@ -345,56 +413,76 @@ export default function DashboardView({ user }: DashboardViewProps) {
     localStorage.setItem('ew_dashboard_theme', newT);
   };
 
-  const selectedCard = activeDashboard?.layout.rows.flatMap(r => r.cards).find(c => c.id === selectedCardId);
-  const selectedRowId = activeDashboard?.layout.rows.find(r => r.cards.some(c => c.id === selectedCardId))?.id;
+  const selectedCard = activeDashboard?.layout.rows.flatMap(r => r.cards).filter(Boolean).find(c => c.id === selectedCardId);
+  const selectedRowId = activeDashboard?.layout.rows.find(r => r.cards.some(c => c?.id === selectedCardId))?.id;
 
-  return (
-    <div className={cn("flex flex-col h-screen overflow-hidden", theme === 'dark' ? "bg-slate-950 text-slate-100 dark" : "bg-white text-gray-900")}>
-      <Header 
-        user={user} dashboards={dashboards} activeDashboardId={isLatestDataOpen ? 'latest-data' : activeDashboardId} 
-        setActiveDashboardId={(id) => {
-          if (id === 'latest-data') {
-            setIsLatestDataOpen(true);
-            setActiveDashboardId(null);
-          } else {
-            setIsLatestDataOpen(false);
-            setActiveDashboardId(id);
-          }
-        }} 
-        isEditMode={isEditMode} setIsEditMode={setIsEditMode}
-        isRefreshing={isRefreshing} handleRefresh={handleRefresh} lastRefreshed={lastRefreshed}
-        autoRefreshInterval={autoRefreshInterval} setAutoRefreshInterval={setAutoRefreshInterval}
-        globalExcludeListing={globalExcludeListing} setGlobalExcludeListing={setGlobalExcludeListing}
-        createDashboard={createDashboard} onSignOut={() => signOut(auth)} 
-        hasSession={hasSession} isSampleData={isSampleData} onRenameDashboard={renameDashboard}
-        onCloseDashboard={closeDashboard}
-        onOpenDebug={() => setIsDebugOpen(true)} onOpenConfig={() => setIsConfigOpen(true)}
-        onSaveDashboard={saveDashboard} onShareDashboard={shareDashboard} 
-        onOpenDashboardMenu={() => setIsOpenDashboardOpen(true)}
-        theme={theme} toggleTheme={toggleTheme} colorScheme={colorScheme || 'blue'}
-        onUpdateColorScheme={(val) => { setColorScheme(val); localStorage.setItem('ew_dashboard_color', val); }}
-        onViewLatestData={() => { setIsLatestDataOpen(true); setActiveDashboardId(null); }}
-        isLatestDataOpen={isLatestDataOpen}
-      />
+      const bgStyles: Record<string, string> = {
+        blue: theme === 'dark' ? "bg-slate-900/50" : "bg-[#F9FAFB]",
+        green: theme === 'dark' ? "bg-slate-900/50" : "bg-emerald-50/30",
+        red: theme === 'dark' ? "bg-slate-900/50" : "bg-rose-50/30",
+        amber: theme === 'dark' ? "bg-slate-900/50" : "bg-amber-50/30",
+        multi: theme === 'dark' ? "bg-slate-950" : "bg-slate-50",
+        pastel: "bg-[#F8F9FA]",
+        warm: "bg-gradient-to-br from-[#FDF8E1] to-[#FFFFFF]",
+        midnight: "bg-[#0F111A]",
+        forest: "bg-[#F3F4F6]",
+        slate: "bg-[#E6E6E6]"
+      };
 
-      <main className={cn("flex-1 overflow-y-auto p-10", theme === 'dark' ? "bg-slate-900/50" : "bg-[#F9FAFB]")}>
-        {isLatestDataOpen ? (
-          <LatestDataView data={reviews} onOpenDataSources={() => setIsDebugOpen(true)} theme={theme} />
-        ) : !activeDashboard ? (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <LayoutGrid className="w-12 h-12 text-gray-300 mb-4" />
-            <h2 className="text-xl font-bold mb-2">No active dashboard</h2>
-            <button onClick={createDashboard} className="bg-black text-white px-6 py-2 rounded text-xs font-bold uppercase tracking-widest hover:bg-gray-800">Create New</button>
-          </div>
-        ) : (
+      return (
+        <div className={cn("flex flex-col h-screen overflow-hidden", theme === 'dark' ? "bg-slate-950 text-slate-100 dark" : "bg-white text-gray-900")}>
+          <Header 
+            user={user} dashboards={dashboards.filter(d => openDashboardIds.includes(d.id))} activeDashboardId={isLatestDataOpen ? 'latest-data' : activeDashboardId} 
+            setActiveDashboardId={(id) => {
+              if (id === 'latest-data') {
+                setIsLatestDataOpen(true);
+                setActiveDashboardId(null);
+              } else {
+                if (!openDashboardIds.includes(id)) {
+                  setOpenDashboardIds(prev => [...prev, id]);
+                }
+                setIsLatestDataOpen(false);
+                setActiveDashboardId(id);
+              }
+            }} 
+            isEditMode={isEditMode} setIsEditMode={setIsEditMode}
+            isRefreshing={isRefreshing} handleRefresh={handleRefresh} lastRefreshed={lastRefreshed}
+            autoRefreshInterval={autoRefreshInterval} setAutoRefreshInterval={setAutoRefreshInterval}
+            globalExcludeListing={globalExcludeListing} setGlobalExcludeListing={setGlobalExcludeListing}
+            createDashboard={createDashboard} onSignOut={() => signOut(auth)} 
+            hasSession={hasSession} isSampleData={isSampleData} onRenameDashboard={renameDashboard}
+            onCloseDashboard={closeDashboard}
+            onOpenDebug={() => setIsDebugOpen(true)} onOpenConfig={() => setIsConfigOpen(true)}
+            onSaveDashboard={saveDashboard} onShareDashboard={shareDashboard} 
+            onRevokeAccess={revokeDashboardAccess}
+            collaborators={activeDashboard?.collaborators || []}
+            isOwner={activeDashboard?.ownerId === user.uid}
+            onOpenDashboardMenu={() => setIsOpenDashboardOpen(true)}
+            theme={theme} toggleTheme={toggleTheme} colorScheme={colorScheme || 'blue'}
+            onUpdateColorScheme={(val) => { setColorScheme(val); localStorage.setItem('ew_dashboard_color', val); }}
+            onViewLatestData={() => { setIsLatestDataOpen(true); setActiveDashboardId(null); }}
+            isLatestDataOpen={isLatestDataOpen}
+          />
+
+          <main className={cn("flex-1 overflow-y-auto p-10 transition-colors duration-500", bgStyles[colorScheme || 'blue'])}>
+            {isLatestDataOpen ? (
+              <LatestDataView data={reviews} onOpenDataSources={() => setIsDebugOpen(true)} theme={theme} />
+            ) : !activeDashboard ? (
+              <div className="flex flex-col items-center justify-center h-full text-center">
+                <LayoutGrid className="w-12 h-12 text-gray-300 mb-4" />
+                <h2 className="text-xl font-bold mb-2">No active dashboard</h2>
+                <button onClick={createDashboard} className="bg-black text-white px-6 py-2 rounded text-xs font-bold uppercase tracking-widest hover:bg-gray-800">Create New</button>
+              </div>
+            ) : (
           <div className="space-y-10">
             {activeDashboard.layout.rows.map(row => (
-              <div key={row.id} ref={el => rowRefs.current[row.id] = el} data-row-id={row.id} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8 min-h-[100px]">
-                {row.cards.map(card => (
+              <div key={row.id} ref={el => { rowRefs.current[row.id] = el; }} data-row-id={row.id} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8 min-h-[100px] grid-auto-rows-[minmax(280px,auto)]">
+                {row.cards.filter(Boolean).map(card => (
                   <Card 
                     key={card.id} card={card} reviews={reviews} globalExcludeListing={globalExcludeListing}
                     globalColorScheme={colorScheme || 'blue'} isEditMode={isEditMode} isSelected={selectedCardId === card.id}
                     isSampleData={isSampleData} onSelect={() => setSelectedCardId(card.id)} 
+                    onUpdate={(update) => updateCardConfig(row.id, card.id, update)}
                     onDuplicate={() => duplicateCard(row.id, card)}
                     onDelete={() => deleteCard(row.id, card.id)}
                     theme={theme}
@@ -431,26 +519,50 @@ export default function DashboardView({ user }: DashboardViewProps) {
         {isOpenDashboardOpen && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 0.5 }} exit={{ opacity: 0 }} onClick={() => setIsOpenDashboardOpen(false)} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
-            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="bg-white dark:bg-slate-950 rounded-2xl shadow-2xl w-full max-w-sm max-h-[70vh] flex flex-col relative z-20 border border-gray-200 dark:border-slate-800 overflow-hidden">
-              <div className="p-6 border-b border-gray-100 dark:border-slate-900 flex items-center justify-between">
-                <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><LayoutGrid className="w-4 h-4 text-blue-500" /> Open Dashboard</h3>
-                <button onClick={() => setIsOpenDashboardOpen(false)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-900 rounded-lg"><X className="w-4 h-4 text-gray-400" /></button>
+            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[70vh] flex flex-col relative z-20 border border-gray-200 overflow-hidden">
+              <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2 text-gray-900"><LayoutGrid className="w-4 h-4 text-blue-500" /> Open Dashboard</h3>
+                <button onClick={() => setIsOpenDashboardOpen(false)} className="p-1.5 hover:bg-gray-100 rounded-lg"><X className="w-4 h-4 text-gray-400" /></button>
               </div>
-              <div className="p-2 overflow-y-auto flex-1">
+              <div className="p-2 overflow-y-auto flex-1 bg-white">
                 {dashboards.map(d => (
-                  <button key={d.id} onClick={() => { setActiveDashboardId(d.id); setIsOpenDashboardOpen(false); }} className={cn("w-full flex items-center justify-between p-4 rounded-xl transition mb-1", activeDashboardId === d.id ? "bg-blue-50 dark:bg-blue-900/20 text-blue-600" : "hover:bg-gray-50 dark:hover:bg-slate-900")}>
-                    <div className="text-left">
-                      <div className="text-xs font-bold uppercase tracking-widest">{d.name}</div>
-                      <div className="text-[10px] opacity-60">{d.ownerId === user.uid ? 'Private' : 'Shared with you'}</div>
-                    </div>
-                    {activeDashboardId === d.id && <Check className="w-4 h-4" />}
-                  </button>
+                  <div key={d.id} className="relative group/db mb-1">
+                    <button 
+                      onClick={() => { 
+                        if (!openDashboardIds.includes(d.id)) {
+                          setOpenDashboardIds(prev => [...prev, d.id]);
+                        }
+                        setActiveDashboardId(d.id); 
+                        setIsOpenDashboardOpen(false); 
+                      }} 
+                      className={cn(
+                        "w-full flex items-center justify-between p-4 rounded-xl transition", 
+                        activeDashboardId === d.id ? "bg-blue-50 text-blue-600" : "hover:bg-gray-50 text-gray-700"
+                      )}
+                    >
+                      <div className="text-left">
+                        <div className="text-xs font-bold uppercase tracking-widest">{d.name}</div>
+                        <div className="text-[10px] opacity-60">{d.ownerId === user.uid ? 'Private' : 'Shared with you'}</div>
+                      </div>
+                      {activeDashboardId === d.id && <Check className="w-4 h-4" />}
+                    </button>
+                    {d.ownerId === user.uid && (
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); deleteDashboard(d.id); }}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-gray-300 hover:text-red-500 opacity-0 group-hover/db:opacity-100 transition-opacity"
+                        title="Delete Dashboard"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
                 ))}
               </div>
             </motion.div>
           </div>
         )}
       </AnimatePresence>
+
     </div>
   );
 }

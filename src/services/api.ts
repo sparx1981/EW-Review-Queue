@@ -196,9 +196,9 @@ export async function testApiConnection(authHeader?: string): Promise<Connection
       };
     }
 
-    const records = extractRecordsFromResponse(json);
-    if (records.length > 0) {
-      return { ok: true, status: response.status, statusText: 'Connected', hasCookie, errorType: 'none', detail: `Connected — ${records.length} review records found.` };
+    const { allRecords, pageCount } = await fetchAllPages(testUrl, headers);
+    if (allRecords.length > 0) {
+      return { ok: true, status: response.status, statusText: 'Connected', hasCookie, errorType: 'none', detail: `Connected — ${allRecords.length} total records across ${pageCount} page(s).` };
     }
 
     return { ok: true, status: response.status, statusText: 'Connected (empty)', hasCookie, errorType: 'none', detail: 'Connected successfully. The active review queue appears to be empty.' };
@@ -282,6 +282,52 @@ export function generateSampleData(days = 400): EWReview[] {
   return data;
 }
 
+/**
+ * Internal helper to fetch all pages of records using cursor-based pagination.
+ * API uses lastEvaluatedKey { status1, status2 } for DynamoDB-style cursor navigation.
+ */
+async function fetchAllPages(baseUrl: string, headers: Record<string, string>): Promise<{ allRecords: any[], pageCount: number, rawJson: any[] }> {
+  const allRecords: any[] = [];
+  const rawJsonPages: any[] = [];
+  let pageCount = 1;
+  let cursors: { status1?: any; status2?: any } | null = null;
+
+  while (true) {
+    let url = baseUrl;
+    if (cursors) {
+      if (cursors.status1) {
+        url += `&lastEvaluatedKey1=${encodeURIComponent(JSON.stringify(cursors.status1))}`;
+      }
+      if (cursors.status2) {
+        url += `&lastEvaluatedKey2=${encodeURIComponent(JSON.stringify(cursors.status2))}`;
+      }
+    }
+
+    console.info(`[EW] Fetching page ${pageCount} from ${url}...`);
+    
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} ${response.statusText}`);
+    }
+
+    const json = await response.json();
+    const records = extractRecordsFromResponse(json);
+    allRecords.push(...records);
+    rawJsonPages.push(json);
+
+    const lek = json.lastEvaluatedKey;
+    if (lek && (lek.status1 || lek.status2)) {
+      cursors = { status1: lek.status1, status2: lek.status2 };
+      pageCount++;
+    } else {
+      break;
+    }
+  }
+
+  console.info(`[EW] Done — ${allRecords.length} total records across ${pageCount} page(s)`);
+  return { allRecords, pageCount, rawJson: rawJsonPages };
+}
+
 export async function probeAndFetch(authHeader?: string): Promise<{ data: EWReview[], isSample: boolean, rawPayload?: any }> {
   const headers = buildHeaders(authHeader);
   const sources = getSourceUrls();
@@ -293,29 +339,19 @@ export async function probeAndFetch(authHeader?: string): Promise<{ data: EWRevi
   try {
     const results = await Promise.all(sources.map(async (source) => {
       try {
-        const response = await fetch(source.url, { headers });
+        const { allRecords, pageCount, rawJson } = await fetchAllPages(source.url, headers);
+        
+        rawPayload.sources.push({
+          name: source.name,
+          url: source.url,
+          status: 'success',
+          pagesFetched: pageCount,
+          recordsExtracted: allRecords.length,
+          firstRecord: allRecords[0] ?? null,
+          data: rawJson, // array of raw page responses
+        });
 
-        if (response.ok) {
-          const json = await response.json();
-          const records = extractRecordsFromResponse(json);
-          
-          rawPayload.sources.push({
-            name: source.name,
-            url: source.url,
-            status: 'success',
-            rawResponseType: Array.isArray(json) ? 'array' : (typeof json === 'object' ? `object(keys:${Object.keys(json).join(',')})` : typeof json),
-            recordsExtracted: records.length,
-            firstRecord: records[0] ?? null,
-            data: json,
-          });
-
-          return records.map(normalizeReview);
-        }
-
-        const errorDetail = `${source.name}: HTTP ${response.status} ${response.statusText}`;
-        errorLogs.push(errorDetail);
-        rawPayload.sources.push({ name: source.name, url: source.url, status: 'failed', error: errorDetail });
-        return [];
+        return allRecords.map(normalizeReview);
       } catch (e: any) {
         const errorDetail = `${source.name}: ${e?.message || 'Network error'}`;
         errorLogs.push(errorDetail);
@@ -325,14 +361,6 @@ export async function probeAndFetch(authHeader?: string): Promise<{ data: EWRevi
     }));
 
     combinedData = results.flat();
-
-    // Deduplicate records by ID
-    const seenIds = new Set<string>();
-    combinedData = combinedData.filter(item => {
-      if (seenIds.has(item.id)) return false;
-      seenIds.add(item.id);
-      return true;
-    });
 
     // If at least one source responded with HTTP 200 (even an empty array), treat this as live data
     const anySourceSucceeded = rawPayload.sources.some((s: any) => s.status === 'success');

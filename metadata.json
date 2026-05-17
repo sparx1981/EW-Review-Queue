@@ -2,5 +2,5 @@
   "name": "Extension Warehouse Review Dashboard",
   "description": "A configurable analytics dashboard for SketchUp Extension Warehouse review managers with Firebase persistence.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

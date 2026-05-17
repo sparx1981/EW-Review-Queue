@@ -1,9 +1,9 @@
 # Extension Warehouse Review Dashboard — Full Application Specification
 
-> **Last Updated:** 2026-04-23 | **Changed:** Integrated dynamic API Source URLs with validation in the global config modal; updated probeAndFetch to support user-defined endpoint merging.
+> **Last Updated:** 2026-05-17 | **Changed:** Optimized "Last Year" benchmarking with month-only axis labels. Finalized visibility for all dark-themed variations. Optimized modal chart scales and contrast. Implemented side-by-side Bar chart comparisons.
 
 ## 1. Product Vision
-A high-performance, minimalist dashboard builder for SketchUp Extension Warehouse review managers. It provides real-time (or near real-time) visibility into review queues, reviewer velocity, and extension trends through a highly configurable and persistent UI. Now including **Dark Mode** for enhanced visual comfort in low-light environments.
+A high-performance, minimalist dashboard builder for SketchUp Extension Warehouse review managers. It provides real-time (or near real-time) visibility into review queues, reviewer velocity, and extension trends through a highly configurable and persistent UI. Now including **Dark Mode** for enhanced visual comfort in low-light environments and **Collaborative Access Control** for secure dashboard sharing.
 
 ## 2. Architecture Overview
 - **Core:** React 19 (Functional Components, Hooks)
@@ -26,12 +26,12 @@ A high-performance, minimalist dashboard builder for SketchUp Extension Warehous
 | **User Profile** | `user-menu` | Access Open/Save/Share Dashboards, Config, Data View, and Sign Out. |
 
 ### Profile Menu (U)
-- **Open Dashboard**: Opens a selector for saved or shared dashboards.
+- **Open Dashboard**: Opens a selector for saved or shared dashboards. Now includes a **Delete** icon (Trash) for owners to permanently remove custom dashboards.
 - **Save Dashboard**: Manually persists the current layout and metadata.
 - **Share Dashboard**: (Icon: `Share2`) Grant dashboard access to other users by email.
 - **Configure**: Opens the Global Configuration Modal. Now includes **API Source URLs** management allowing users to edit, add, and validate JSON endpoints.
 - **View Latest Data**: Opens the System Tab for raw record inspection.
-- **Color Scheme**: Global selection of primary dashboard color (Blue, Green, Red, Amber, Multi).
+- **Color Scheme**: Global selection of primary dashboard color. Options: Blue, Green, Red, Amber, Multi, Pastel (Soft Mint/Pink), Warm (Cream/Yellow), Midnight (Dark/Cyan), Forest (Sage Green), Slate (Monochrome/Orange).
 - **Sign Out**: Terminates the session.
 
 ### Dashboard Tabs
@@ -39,6 +39,7 @@ A high-performance, minimalist dashboard builder for SketchUp Extension Warehous
 - **Rename:** Double-click any active dashboard tab to enter inline edit mode. Press `Enter` or click away to save the new name to Firestore.
 
 ### Visualisation Improvements (New)
+- **Benchmarks (Deltas)**: Fixed a bug where benchmarks always showed 0%. Now correctly calculates the delta between the active period and its preceding equivalent window (e.g. Current Month vs Previous Month).
 - **Info Icon (i)**: Top-right corner of cards in view mode. Opens a popup showing the exact filter criteria and first 50 rows of JSON powering the card. Now includes a **Filter Logic Debugger** table showing sequential record counts.
 - **Enlarged View**: Clicking on Line, Bar, or Pie charts opens a high-resolution modal version of the graph.
 - **Days Visualization**: New bucket-based format showing distribution of items by age (Submitted to Today) or review time (Submitted to Reviewed).
@@ -53,7 +54,10 @@ A high-performance, minimalist dashboard builder for SketchUp Extension Warehous
 
 ### User Interaction
 - **Auto-Refresh**: Refresh button now includes options for background cycling every 30m, 1h, 3h, or 6h.
-- **Collaboration**: Dashboards can now be shared with other users via email. Shared dashboards appear in the recipient's "Open Dashboard" menu.
+- **Collaboration**: Dashboards can now be shared with other users via email. 
+  - **Shared List**: The profile menu displays a real-time list of all users with access.
+  - **Revocation**: The dashboard owner can revoke access at any time using the "Delete" icon next to each collaborator's email.
+  - **Open Dashboard**: Shared dashboards automatically appear in the recipient's "Open Dashboard" menu.
 - **Save/Persistence**: Global "Save Dashboard" button ensures manual persistence, though layout changes auto-sync to Firestore.
 
 ### Configuration Panel Details
@@ -69,12 +73,17 @@ Each option includes an **Info Icon (i)** with a tooltip describing its mathemat
 - **Days Logic (New)**: Accessible when Format = 'Days'. Supports 'Active Age' vs 'Processing Time' calculations with Min/Max day bounds.
 - **Apply**: Button renamed to 'Apply' for cleaner interaction.
 
-### Dashboard Layout Controls (Edit Mode Only)
-- **Add Row:** Appends a new 12-column logical row to the bottom of the active dashboard.
-- **Add Card:** Appends a new configuration card to a specific row. Defaults to KPI view.
-- **Duplicate Card:** (Icon: `Copy`) Located between Settings and Delete icons. Creates an exact copy of the selected card with a "(Copy)" suffix in the title for rapid iteration.
-- **Drag Handle:** 6-dot icon allowing vertical row reordering and horizontal card shifting.
-- **Remove:** Deletes specific cards or entire rows (requires confirmation if data exists).
+### Dashboard View & Layout Controls (Edit Mode Only)
+- **4-Column Grid:** Dashboard rows now strictly support a 4-column grid at desktop resolutions (`xl`).
+- **Component Resizing:** Each card now features subtle resize icons on all four borders (Left, Right, Top, Bottom) when in Edit Mode.
+  - **Width Toggles:** Left/Right icons increment/decrement the card's `w` property (1-4).
+  - **Height Toggles:** Top/Bottom icons increment/decrement the card's `h` property (1-4).
+- **Reflow Logic:** Uses CSS Grid "Push" behavior. If a card's new width exceeds the 4-column limit of its current row, it wraps to the next line, shifting subsequent cards down.
+- **Visual Scaling:** Internal visualizations (Charts, Leaderboards, Tables) use 100% of the available container space, adapting height and width dynamically based on `w`/`h` settings.
+- **Add Row:** Appends a new 4-column grid row to the bottom of the active dashboard.
+- **Add Card:** Appends a new configuration card to a specific row. Defaults to 1x1 size.
+- **Persistence:** Card dimensions are automatically persisted to Firestore on every resize and included in the global "Save Dashboard" payload.
+- **Fix (Tab Stability):** Switching between dashboard tabs is now persistent during card updates; the application no longer defaults to the first tab after applying configuration changes.
 
 ## 4. Right Configuration Panel
 Accessed by clicking the "Configure" cog on any card in Edit Mode.
@@ -115,7 +124,7 @@ export interface Dashboard {
   updatedAt: any;
   order: number;
   layout: DashboardLayout;
-  colorScheme?: 'blue' | 'green' | 'red' | 'amber' | 'multi';
+  colorScheme?: 'blue' | 'green' | 'red' | 'amber' | 'multi' | 'pastel' | 'warm' | 'midnight' | 'forest' | 'slate';
 }
 ```
 
@@ -124,7 +133,9 @@ export interface Dashboard {
 export interface CardConfig {
   id: string;
   title: string;
-  vizType: 'kpi' | 'bar' | 'line' | 'pie' | 'leaderboard' | 'table' | 'days';
+  vizType: 'kpi' | 'bar' | 'line' | 'pie' | 'leaderboard' | 'table' | 'days' | 'summary';
+  w?: number; // 1-4
+  h?: number; // 1-4
   filters: {
     dataset?: 'active' | 'completed'; // Legacy field
     status: string[];
@@ -152,8 +163,9 @@ export interface CardConfig {
 ```
 
 ## 6. API Surface & Scripting
-- **`probeAndFetch(authHeader?)`**: Reads custom endpoints from `localStorage`. Sequentially attempts to access URLs. Merges all reviews into a single flat array without deduplication.
+- **`probeAndFetch(authHeader?)`**: Reads custom endpoints from `localStorage`. Sequentially attempts to access URLs using recursive cursor-based pagination. Merges all reviews into a single flat array without deduplication.
 - **`validateSourceUrl(url, authHeader?)`**: Functional validator that checks if a URL returns valid JSON and extracts records to verify compatibility.
+- **`getPreviousDateRange(period)`**: Utility that calculates a look-back window of equal duration to the input window for benchmark comparisons.
 - **`generateSampleData()`**: Returns a deterministic set of ~500 reviews for functional testing when live API is unreachable.
 - **`applyFilters(data, filters)`**: Client-side filtering engine. Filters must pass BOTH `dateSubmitted` AND `dateReviewed` criteria. Includes optional deduplication logic for `extensionName` if `uniqueOnly` is true.
 - **`getFilterSteps(data, filters)`**: Used by the logic debugger to show result counts after each sequential filter stage. Now includes a "Unique Extensions Only" step.

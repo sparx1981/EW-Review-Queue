@@ -9,44 +9,114 @@ dayjs.extend(weekday);
 dayjs.extend(weekOfYear);
 
 export function getDateRange(filterOption: string): { start: number; end: number } | null {
-  const now = new Date();
-  const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
-
-  const startOfToday    = new Date(y, m, d, 0, 0, 0, 0).getTime();
-  const endOfToday      = new Date(y, m, d, 23, 59, 59, 999).getTime();
-  const startOfYesterday = new Date(y, m, d - 1, 0, 0, 0, 0).getTime();
-  const endOfYesterday  = new Date(y, m, d - 1, 23, 59, 59, 999).getTime();
-  const start30         = new Date(y, m, d - 30, 0, 0, 0, 0).getTime();
-  const start90         = new Date(y, m, d - 90, 0, 0, 0, 0).getTime();
-  const startYear       = new Date(y, 0, 1, 0, 0, 0, 0).getTime();
-  const rightNow        = Date.now();
-
+  const now = dayjs();
+  
   switch (filterOption) {
-    case 'today':      return { start: startOfToday,     end: endOfToday };
-    case 'yesterday':  return { start: startOfYesterday, end: endOfYesterday };
-    case 'past30':     
+    case 'today':
+      return { 
+        start: now.startOf('day').valueOf(), 
+        end: now.endOf('day').valueOf() 
+      };
+    case 'yesterday':
+      return { 
+        start: now.subtract(1, 'day').startOf('day').valueOf(), 
+        end: now.subtract(1, 'day').endOf('day').valueOf() 
+      };
+    case 'past_7':
+    case 'past7':
+      return { 
+        start: now.subtract(7, 'days').startOf('day').valueOf(), 
+        end: now.valueOf() 
+      };
     case 'past_30':
-    case 'past30days': return { start: start30,           end: rightNow };
-    case 'past90':     
+    case 'past30':
+      return { 
+        start: now.subtract(30, 'days').startOf('day').valueOf(), 
+        end: now.valueOf() 
+      };
+    case 'past_60':
+      return { 
+        start: now.subtract(60, 'days').startOf('day').valueOf(), 
+        end: now.valueOf() 
+      };
     case 'past_90':
-    case 'past90days': return { start: start90,           end: rightNow };
+    case 'past90':
+      return { 
+        start: now.subtract(90, 'days').startOf('day').valueOf(), 
+        end: now.valueOf() 
+      };
+    case 'past_120':
+      return { 
+        start: now.subtract(120, 'days').startOf('day').valueOf(), 
+        end: now.valueOf() 
+      };
+    case 'past_365':
+      return { 
+        start: now.subtract(365, 'days').startOf('day').valueOf(), 
+        end: now.valueOf() 
+      };
+    case 'this_week':
+      return { 
+        start: now.startOf('week').valueOf(), 
+        end: now.valueOf() 
+      };
+    case 'this_month':
+      return { 
+        start: now.startOf('month').valueOf(), 
+        end: now.valueOf() 
+      };
     case 'this_year':
-    case 'thisYear':   return { start: startYear,         end: rightNow };
-    case 'all_time':
-    case 'allTime':
-    default:           return null;
+      return { 
+        start: now.startOf('year').valueOf(), 
+        end: now.valueOf() 
+      };
+    default:
+      return null;
   }
 }
 
-export function applyFilters(data: EWReview[], card: CardConfig, excludeListingGlobal: boolean): EWReview[] {
+export function getPreviousDateRange(filterOption: string, comparisonMode: 'previous_period' | 'last_week' | 'last_month' | 'last_year' = 'previous_period'): { start: number; end: number } | null {
+  const current = getDateRange(filterOption);
+  if (!current) return null;
+
+  if (comparisonMode === 'last_year') {
+    return {
+      start: dayjs(current.start).subtract(1, 'year').valueOf(),
+      end: dayjs(current.end).subtract(1, 'year').valueOf()
+    };
+  }
+
+  if (comparisonMode === 'last_month') {
+    return {
+      start: dayjs(current.start).subtract(1, 'month').valueOf(),
+      end: dayjs(current.end).subtract(1, 'month').valueOf()
+    };
+  }
+
+  if (comparisonMode === 'last_week') {
+    return {
+      start: dayjs(current.start).subtract(1, 'week').valueOf(),
+      end: dayjs(current.end).subtract(1, 'week').valueOf()
+    };
+  }
+
+  // default: previous_period
+  const duration = current.end - current.start;
+  return {
+    start: current.start - duration - 1,
+    end: current.start - 1
+  };
+}
+
+export function applyFilters(data: EWReview[], card: CardConfig, excludeListingGlobal: boolean, options?: { overrideSubRange?: { start: number; end: number } | null; overrideRevRange?: { start: number; end: number } | null }): EWReview[] {
   const { filters } = card;
   const now = dayjs();
   const listingMode = filters.listingPageMode || (filters.excludeListingPages || excludeListingGlobal ? 'exclude' : 'both');
 
   const subPeriod = filters.submittedPeriod || (filters as any).period || 'all_time';
-  const subRange = getDateRange(subPeriod);
+  const subRange = options?.overrideSubRange !== undefined ? options.overrideSubRange : getDateRange(subPeriod);
   const revPeriod = filters.reviewedPeriod || 'all_time';
-  const revRange = getDateRange(revPeriod);
+  const revRange = options?.overrideRevRange !== undefined ? options.overrideRevRange : getDateRange(revPeriod);
 
   const todayEndOfDay = dayjs().endOf('day');
 

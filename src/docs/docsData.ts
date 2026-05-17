@@ -12,7 +12,7 @@ export const userDocumentation = [
   {
     id: 'edit-mode',
     title: 'Building Dashboards',
-    content: 'Switch to **Edit Mode** using the button in the header. In Edit Mode, you can:\n- **Add Cards**: Click the "+" button in any row.\n- **Add Rows**: Click the "Add Row" button at the bottom.\n- **Duplicate Cards**: Click the Copy icon (❏) between the gear and trash icons to clone a card instantly.\n- **Drag & Drop**: Use the handle (⠿) on the top left of any card to move it within or between rows.\n- **Configure Cards**: Click the gear icon (⚙) on a card to open the configuration panel.'
+    content: 'Switch to **Edit Mode** using the button in the header. In Edit Mode, you can:\n- **Add Cards**: Click the "+" button in any row.\n- **Add Rows**: Click the "Add Row" button at the bottom.\n- **Resizing Cards**: Subtle icons appear on all 4 borders of a card. Click the [+] and [-] icons on the Left/Right to change **Width** (1-4 columns), and on the Top/Bottom to change **Height** (1-4 units). The dashboard uses a 4-column column grid logic and will automatically "push" cards to the next row if they exceed the width.\n- **Duplicate Cards**: Click the Copy icon (❏) between the gear and trash icons to clone a card instantly.\n- **Drag & Drop**: Use the handle (⠿) on the top left of any card to move it within or between rows.\n- **Configure Cards**: Click the gear icon (⚙) on a card to open the configuration panel.'
   },
   {
     id: 'session-detection',
@@ -27,7 +27,7 @@ export const userDocumentation = [
   {
     id: 'theme-mode',
     title: 'Dark Mode & Global Colors',
-    content: '- **Dark Mode**: Click the Moon/Sun icon in the header to toggle between Light and Dark mode.\n- **Global Colors**: Open the user profile menu to choose a global color scheme (Blue, Green, Red, Amber, or Multi) which applies to all charts and rankings across your dashboard.'
+    content: '- **Dark Mode**: Click the Moon/Sun icon in the header to toggle between Light and Dark mode.\n- **Global Colors**: Open the user profile menu to choose a global color scheme (Blue, Green, Red, Amber, Multi, Pastel, Warm, Midnight, Forest, or Slate). These schemes redefine the primary accent color, chart palettes, and even the dashboard workspace background (e.g., Warm uses a soft yellow gradient while Midnight switches to a deep space black).'
   },
   {
     id: 'kpi-details',
@@ -41,8 +41,8 @@ export const userDocumentation = [
   },
   {
     id: 'dashboard-management',
-    title: 'Saving, Opening & Sharing',
-    content: 'Dashboards are automatically saved as you edit, but you can also use **"Save Dashboard"** in the profile menu to ensure persistence.\n- **Open Dashboard**: Load any dashboard owned by you or shared with you from the "Open Dashboard" menu.\n- **Share Dashboard**: Input a collaborator\'s email in the profile menu to grant them access to your current view.'
+    title: 'Saving, Opening & Deleting',
+    content: 'Dashboards are automatically saved as you edit, but you can also use **"Save Dashboard"** in the profile menu to ensure persistence.\n- **Open Dashboard**: Load any dashboard owned by you or shared with you from the "Open Dashboard" menu.\n- **Delete Dashboard**: If you are the owner of a dashboard, a red trash icon will appear next to its name in the "Open Dashboard" list. Click it to permanently remove the dashboard.\n- **Share Dashboard**: Input a collaborator\'s email in the profile menu to grant them access to your current view.'
   },
   {
     id: 'refresh',
@@ -52,7 +52,7 @@ export const userDocumentation = [
   {
     id: 'date-engine',
     title: 'Date Filtering Engine',
-    content: 'The dashboard uses a high-precision Unix Millisecond Timestamp engine for date comparisons:\n- **Numeric Precision**: Comparisons use the underlying numeric values from the JSON data for absolute accuracy.\n- **Debugger transparency**: The "Data Source Criteria" debugger now shows exactly which Unix timestamp is being used for searching when "Today" or "Yesterday" filters are applied.\n- **Relative Context**: "Today" and "Yesterday" selections precisely target server-local date boundaries.'
+    content: 'The dashboard uses a high-precision Unix Millisecond Timestamp engine for date comparisons:\n- **Numeric Precision**: Comparisons use the underlying numeric values from the JSON data for absolute accuracy.\n- **Debugger transparency**: The "Data Source Criteria" debugger now shows exactly which Unix timestamp is being used for searching when "Today" or "Yesterday" filters are applied.\n- **Relative Context**: "Today" and "Yesterday" selections precisely target server-local date boundaries.\n- **Benchmarks**: Benchmark values (deltas) accurately compare the current filtered period against the equivalent previous period (e.g. Today vs Yesterday, or Past 30 Days vs the 30 days prior).'
   },
   {
     id: 'json-debugger',
@@ -100,6 +100,11 @@ export const userDocumentation = [
     content: 'Use the **"Unique Only"** toggle in the configuration panel to count each extension only once. \n- **Logic**: When enabled, the dashboard identifies duplicates based on the **Extension Name**. Only the first occurrence in the filtered dataset is kept.\n- **Use Case**: Perfect for tracking how many *individual*extensions were reviewed, rather than how many total version updates occurred in a period.'
   },
   {
+    id: 'pagination',
+    title: 'Cursor-Based Pagination',
+    content: 'The dashboard now handles large datasets using DynamoDB-style cursor pagination. If an API endpoint contains more records than can be returned in a single response, the system automatically fetches subsequent pages until all records are retrieved, ensuring complete visibility across high-volume review queues.'
+  },
+  {
     id: 'api-sources',
     title: 'Managing API Source URLs',
     content: 'You can now customize which endpoints the dashboard pulls data from.\n1. **Open Config**: Go to the Profile Menu → Configure.\n2. **Expand Sources**: Click on "API Source URLs" to see the active endpoints.\n3. **Edit**: You can change the names and URLs of existing sources.\n4. **Validate**: Click the "Validate" button on any URL to check if it returns valid JSON review data. The system will tell you exactly how many records were found.\n5. **Add/Remove**: Use the "Add API Source" button to append new endpoints or the trash icon to remove them. All data from active sources is merged into one dashboard stream.'
@@ -117,6 +122,18 @@ async function loadData() {
   console.log(reviews);
 }`,
     description: 'The API layer handles authentication probing and result normalization.'
+  },
+  {
+    id: 'benchmark-logic',
+    title: 'Benchmark Comparison Engine',
+    code: `import { getPreviousDateRange, applyFilters } from './services/dataStore';
+
+const current = applyFilters(data, card, false);
+const prevRange = getPreviousDateRange(card.filters.submittedPeriod);
+const previous = applyFilters(data, card, false, prevRange);
+
+const delta = ((current.length - previous.length) / previous.length) * 100;`,
+    description: 'Benchmarks compare the current dataset against a look-back window of equal duration.'
   },
   {
     id: 'data-store',
@@ -189,6 +206,36 @@ if (filters.uniqueOnly) {
     description: 'The deduplication logic ensures that each extension is represented only once in the final dataset when enabled.'
   },
   {
+    id: 'access-management',
+    title: 'Access Management',
+    code: `import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+
+// Grant access to a collaborator
+async function share(dashboardId, email) {
+  await updateDoc(doc(db, 'dashboards', dashboardId), {
+    collaborators: arrayUnion(email),
+    updatedAt: serverTimestamp()
+  });
+}
+
+// Revoke access from a collaborator
+async function revoke(dashboardId, email) {
+  const newColabs = currentCollaborators.filter(e => e !== email);
+  await updateDoc(doc(db, 'dashboards', dashboardId), {
+    collaborators: newColabs,
+    updatedAt: serverTimestamp()
+  });
+}`,
+    description: 'Collaborative access is managed via the collaborators array in Firestore, with synchronous revocation logic.'
+  },
+  {
+    id: 'pagination-logic',
+    title: 'Cursor Pagination Helper',
+    code: `const { allRecords, pageCount } = await fetchAllPages(url, headers);
+console.log(\`Fetched \${allRecords.length} records across \${pageCount} pages\`);`,
+    description: 'Internal helper that implements iterative while-loop pagination using lastEvaluatedKey cursors.'
+  },
+  {
     id: 'source-config',
     title: 'API Source Configuration',
     code: `import { getSourceUrls, setSourceUrls } from './services/dataStore';
@@ -202,10 +249,85 @@ setSourceUrls([...sources, { name: 'Alpha', url: '/api/alpha' }]);
 const result = await validateSourceUrl('/api/beta');
 if (result.ok) console.log('Source is valid!');`,
     description: 'Provides persistence and validation for dynamic API endpoints used by the probing engine.'
+  },
+  {
+    id: 'grid-layout',
+    title: 'Dynamic Grid Layout',
+    code: `<div className={cn(
+  "grid transition-all duration-200",
+  card.w === 2 && "xl:col-span-2",
+  card.h === 2 && "row-span-2"
+)}>
+  {/* Content scales to fill 100% */}
+</div>`,
+    description: 'Cards use col-span and row-span logic within a 12-unit or 4-unit grid. Visualizations detect parent size and scale accordingly.'
   }
 ];
 
 export const releaseNotes = [
+  {
+    date: '2026-05-17',
+    changes: [
+      'AI-Powered Insights: Introduced a new "Summary" card type that leverages Gemini to analyze trends, abnormal highs/lows, reviewer performance, and developer activity.',
+      'Benchmarking Support: Summary cards automatically incorporate benchmarks when comparisons are enabled, providing context on performance shifts.',
+      'Year-over-Year Benchmarking: Supported "Previous Year" comparisons for all bar and line charts, allowing users to benchmark against the same period 12 months prior with perfect date alignment.',
+      'Refined Axis Labels: When grouping by "Month" with a "Last Year" benchmark active, chart axes now only show month names to prevent date-shifting confusion.',
+      'Dynamic Comparison Labels: Chart legends now accurately reflect the active benchmark mode (e.g., "Last Year" instead of "Previous Period").',
+      'Intelligence Modal Styling: Enlarged chart views in Light Mode now automatically override series colors to use high-contrast light grey for all comparison data types.',
+      'Accessibility Audit: Enhanced visibility for benchmark totals and "vs" labels in Light Mode using high-contrast slate tones.',
+      'Refined Aggregate Summary: Aggregate sums now use primary theme colors for current values and distinct grey tones for benchmarks.',
+      'Refined Modal Charting: Enlarged chart views now use optimized text sizes and consistent legend styles for better data analysis.',
+      'Finalized Benchmark Rendering: Fixed a critical logic error preventing previous period datasets from displaying in charts. Data shifting now intelligently picks the active date range for accurate side-by-side comparison.',
+      'Distinct Comparison Styles: Restyled chart datasets to ensure "Previous Period" data is visually distinct (subtle dashed lines and transparent fills).',
+      'Implemented Side-by-Side Bar Comparisons: Bar charts now display current and previous periods as distinct adjacent bars for direct visual benchmark analysis.',
+      'Auto-Legend Logic: The chart legend now automatically toggles on when a benchmark is enabled to ensure clear distinction between data series.',
+      'Fixed Comparison Data Persistence: Resolved an issue where previous period data was not rendering in charts. Shifting logic now correctly accounts for both Submitted and Reviewed date ranges.',
+      'Refined Aggregate Sum: The total summary line now explicitly shows current vs previous period totals when benchmark is enabled.',
+      'Enhanced Chart Comparisons: Bar and Line charts now support side-by-side or overlaid dataset comparisons for the previous period.',
+      'Improved Time Labels: "Week" grouping now uses "WC [Date]" format for better readability.',
+      'Refined Config Options: Comparison options for Bar/Line charts are now restricted to "Previous Period" as requested.',
+      'Detailed Filter Debugging: The "Data Source Criteria" modal now explicitly shows the resolved date ranges for comparison periods.',
+      'Implemented Chart Data Grouping: Bar and Line charts can now aggregate data by Day, Week, Month, or Year.',
+      'Refined Config UI: Added a new "Time Grouping" selector in the card configuration panel for better trend analysis over long periods.',
+    ]
+  },
+  {
+    date: '2026-05-11',
+    changes: [
+      'Added "Past 7 Days" filter: New temporal window available for both Date Submitted and Last Reviewed filters.',
+      'New Application Logo: Updated the header logo to a modern bar-graph style representation to better reflect the dashboard\'s analytical purpose.',
+    ]
+  },
+  {
+    date: '2026-04-24',
+    changes: [
+      'Fixed "Close Dashboard" functionality: Implemented a persistent tab management system using `openDashboardIds`. Closing a tab now correctly removes it from the header with an optional save confirmation prompt.',
+      'Refined Header Tabs: Tabs now show the "Close" (X) icon on hover for all dashboards, not just the active one.',
+      'Fixed Benchmark Calculations: Resolved a bug where comparison/benchmark values were incorrectly showing as 0%. The engine now correctly identifies which date field (Submitted vs Reviewed) is used by the card and shifts the corresponding period for the comparison dataset.',
+      'Implemented Dashboard Deletion: Owners can now delete their dashboards directly from the "Open Dashboard" menu via a new context-aware trash icon.',
+      'Implemented getPreviousDateRange helper: New utility for calculating comparison periods (Today vs Yesterday, etc.) based on duration deltas.',
+      'Implemented Access Revocation: Dashboard creators can now view a list of collaborators and revoke their access directly from the profile menu.',
+      'Refined Sharing UI: Added a persistent shared-with list below the email input for better transparency on dashboard permissions.',
+      'Fixed Placeholder Contrast: Updated the "User email..." input to explicitly use black text and placeholder colors for better legibility.',
+      'Light/Dark Consistency: Unified text and background colors in the "Open Dashboard" modal to ensure consistent visibility across both light and dark modes.',
+      'Global Color Sync: Updated all text schemes using slate-300 or slate-200 to use a refined OKLCH palette (oklch(0.42 0.01 0)) as requested.',
+      'Themed Card Backgrounds: Color schemes now apply specific background tints and text color styles to cards (e.g., Midnight uses dark cards with neon accents, while Pastel features soft tinted cards).',
+      'Grid Color Picker: The global color selector has been updated to a 2-row grid layout for better usability and visibility within the user menu.',
+      'Refined Color Palette: Adjusted primary and categorical colors to better align with high-end dashboard design samples.',
+      'Implemented Dashboard Resizing: Users can now adjust card width (1-4 columns) and height (1-4 units) directly in Edit Mode using subtle border icons.',
+      'Reflow & Push Logic: Integrated CSS Grid logic that automatically wraps cards to the next row if they exceed the 4rd column, pushing subsequent content down.',
+      'Fixed Tab Redirection Bug: Resolved an issue where saving card configurations would force the application back to the first dashboard tab. Active tab state is now strictly maintained.',
+      'Visual Scaling: Updated all visualization components (Charts, Tables, Leaderboards) to scale to 100% of their parent container\'s width and height.',
+      'Fixed Drag-and-Drop TypeError: Resolved a "Cannot read properties of null (reading id)" error by implementing proper SortableJS instance cleanup and defensive null checks during card reordering.',
+      'Implemented DynamoDB-style cursor pagination: Added support for status1/status2 cursors to handle large datasets across multiple API pages.',
+      'New fetchAllPages internal helper: Robust iterative fetching logic that automatically builds and follows pagination URLs.',
+      'Enhanced probeAndFetch: Updated the main data engine to sequentially retrieve all available records from every configured source endpoint.',
+      'Updated testApiConnection: The connection validator now reports the total records found across all retrieved pages.',
+      'Performance optimization: Replaced recursive fetching with iterative while-loop logic to prevent stack overflow on extremely large datasets.',
+      'Improved payload metadata: rawPayload now includes pagesFetched and rawJson arrays for all source endpoints for enhanced debugging.',
+      'Updated SPEC.md: Documented the new resizing features, cursor-based pagination architecture, and stability fixes.',
+    ]
+  },
   {
     date: '2026-04-23',
     changes: [
@@ -218,12 +340,7 @@ export const releaseNotes = [
       'Enabled Independent Date Filters: "Date Submitted" and "Last Reviewed" filters now operate independently with AND logic.',
       'Fixed Date Boundary Logic: Standardized all relative date ranges (Today, Yesterday, etc.) to use local time midnight for precise day-to-day accuracy.',
       'Simplified UI: Removed dataset-specific logic from Configuration Panel to provide a more consistent editing experience.',
-      'Updated Latest Data View: Enhanced feed extraction to align with the new merged-stream filtering logic.'
-    ]
-  },
-  {
-    date: '2026-04-23',
-    changes: [
+      'Updated Latest Data View: Enhanced feed extraction to align with the new merged-stream filtering logic.',
       'Implemented high-precision Unix Millisecond Timestamp filtering engine: Replaced string-based comparisons with numeric timestamp logic for all date filters to resolve "Today/Yesterday" results inconsistencies.',
       'Updated Data Source Criteria UI: Relative date filters ("Today", "Yesterday") now display the resolved date and search timestamp in brackets for debugging transparency.',
       'Updated EWReview data model: Standardized on numeric timestamps for submittedAt and reviewedAt fields globally.',
@@ -243,16 +360,10 @@ export const releaseNotes = [
       'Added Auto-Refresh Logic: Configure automated data cycling (30m to 6h intervals).',
       'Implemented Dashboard Sharing: Collaborative view access via email addresses.',
       'Integrated Enlarged Charts: High-resolution modal views for all graphical card formats.',
-      'Updated Product Specification: Refreshed SPEC.md to match the version 1.2 functional surface.'
-    ]
-  },
-  {
-    date: '2026-04-23',
-    changes: [
+      'Updated Product Specification: Refreshed SPEC.md to match the version 1.2 functional surface.',
       'Added Deduplication Toggle: New "Duplicates" filter in the configuration panel allows users to toggle between "Show All" records and "Unique Only" per extension.',
       'Deduplication Engine: Implemented high-performance Set-based deduplication logic in the data processing stream using extensionName as the primary key.',
-      'Updated Filter Debugger: Added a "Unique Extensions Only" stage to the Data Source Criteria debugger to show exactly how many records are removed by the unique filter.',
-      'Updated Product Specification: Refreshed SPEC.md with deduplication logic details and Configuration Panel updates.'
+      'Updated Filter Debugger: Added a "Unique Extensions Only" stage to the Data Source Criteria debugger to show exactly how many records are removed by the unique filter.'
     ]
   },
   {

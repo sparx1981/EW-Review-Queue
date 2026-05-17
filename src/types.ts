@@ -14,7 +14,7 @@ export interface UserProfile {
   };
 }
 
-export type VizType = 'kpi' | 'bar' | 'line' | 'pie' | 'leaderboard' | 'table' | 'days';
+export type VizType = 'kpi' | 'bar' | 'line' | 'pie' | 'leaderboard' | 'table' | 'days' | 'summary';
 
 export interface CardFilters {
   status: string[];
@@ -50,8 +50,8 @@ export interface CardComparison {
 
 export interface CardDisplay {
   showTotal: boolean;
-  colorScheme: 'blue' | 'green' | 'red' | 'amber' | 'multi';
-  groupBy: 'day' | 'week' | 'reviewer' | 'status' | 'none';
+  colorScheme: 'blue' | 'green' | 'red' | 'amber' | 'multi' | 'pastel' | 'warm' | 'midnight' | 'forest' | 'slate';
+  groupBy: 'day' | 'week' | 'month' | 'year' | 'reviewer' | 'status' | 'none';
   showLegend: boolean;
   showDelta: boolean;
 }
@@ -63,6 +63,8 @@ export interface CardConfig {
   filters: CardFilters;
   comparison: CardComparison;
   display: CardDisplay;
+  w?: number; // 1-4
+  h?: number; // 1-4
 }
 
 export interface DashboardRow {
@@ -83,7 +85,7 @@ export interface Dashboard {
   updatedAt: any;
   order: number;
   layout: DashboardLayout;
-  colorScheme?: 'blue' | 'green' | 'red' | 'amber' | 'multi';
+  colorScheme?: 'blue' | 'green' | 'red' | 'amber' | 'multi' | 'pastel' | 'warm' | 'midnight' | 'forest' | 'slate';
 }
 
 export interface SourceConfig {

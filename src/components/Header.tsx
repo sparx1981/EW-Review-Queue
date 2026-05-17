@@ -30,10 +30,16 @@ interface HeaderProps {
   onOpenConfig: () => void;
   theme: 'dark' | 'light';
   toggleTheme: () => void;
-  colorScheme: 'blue' | 'green' | 'red' | 'amber' | 'multi';
-  onUpdateColorScheme: (val: 'blue' | 'green' | 'red' | 'amber' | 'multi') => void;
+  colorScheme: Dashboard['colorScheme'];
+  onUpdateColorScheme: (val: Dashboard['colorScheme']) => void;
   onViewLatestData: () => void;
   isLatestDataOpen: boolean;
+  onSaveDashboard: () => void;
+  onShareDashboard: (email: string) => void;
+  onRevokeAccess: (email: string) => void;
+  collaborators: string[];
+  isOwner: boolean;
+  onOpenDashboardMenu: () => void;
 }
 
 export default function Header({
@@ -64,14 +70,13 @@ export default function Header({
   isLatestDataOpen,
   onSaveDashboard,
   onShareDashboard,
+  onRevokeAccess,
+  collaborators,
+  isOwner,
   onOpenDashboardMenu,
   autoRefreshInterval,
   setAutoRefreshInterval
-}: HeaderProps & { 
-  onSaveDashboard: () => void; 
-  onShareDashboard: (email: string) => void; 
-  onOpenDashboardMenu: () => void;
-}) {
+}: HeaderProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [showRefreshMenu, setShowRefreshMenu] = useState(false);
@@ -106,8 +111,10 @@ export default function Header({
       <div className="px-10 h-20 flex items-center justify-between">
         <div className="flex items-center gap-8">
           <div className="flex items-center gap-2">
-            <div className={cn("w-6 h-6 rounded-sm flex items-center justify-center shadow-sm", theme === 'dark' ? "bg-white" : "bg-black")}>
-              <div className={cn("w-2 h-2 rounded-full", theme === 'dark' ? "bg-black" : "bg-white")}></div>
+            <div className={cn("w-6 h-6 rounded-sm flex items-end justify-center gap-0.5 pb-1 shadow-sm", theme === 'dark' ? "bg-white" : "bg-black")}>
+              <div className={cn("w-1 h-2 rounded-t-[1px]", theme === 'dark' ? "bg-black" : "bg-white")}></div>
+              <div className={cn("w-1 h-3.5 rounded-t-[1px]", theme === 'dark' ? "bg-black" : "bg-white")}></div>
+              <div className={cn("w-1 h-2.5 rounded-t-[1px]", theme === 'dark' ? "bg-black" : "bg-white")}></div>
             </div>
             <span className={cn("font-semibold tracking-tight text-lg hidden sm:inline", theme === 'dark' ? "text-white" : "text-gray-900")}>Extension Warehouse - Review Queue Analytics</span>
           </div>
@@ -278,49 +285,78 @@ export default function Header({
                 {/* Global Color Selector */}
                 <div className="px-4 py-2">
                   <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-2">Global Color</p>
-                  <div className="flex gap-2">
+                  <div className="grid grid-cols-5 gap-y-3 gap-x-2">
                     {[
                       { id: 'blue', color: 'bg-blue-500' },
                       { id: 'green', color: 'bg-green-500' },
                       { id: 'red', color: 'bg-red-500' },
                       { id: 'amber', color: 'bg-amber-500' },
-                      { id: 'multi', color: 'bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500' }
+                      { id: 'multi', color: 'bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500' },
+                      { id: 'pastel', color: 'bg-[#FDCFE1]' },
+                      { id: 'warm', color: 'bg-[#FFD93D]' },
+                      { id: 'midnight', color: 'bg-[#A855F7]' },
+                      { id: 'forest', color: 'bg-[#059669]' },
+                      { id: 'slate', color: 'bg-[#7F8C8D]' }
                     ].map((c) => (
                       <button
                         key={c.id}
                         onClick={() => onUpdateColorScheme(c.id as any)}
                         className={cn(
-                          "w-5 h-5 rounded-full transition-all flex items-center justify-center",
+                          "w-6 h-6 rounded-full transition-all flex items-center justify-center shrink-0 shadow-sm",
                           c.color,
                           colorScheme === c.id ? "ring-2 ring-offset-2 ring-black dark:ring-white scale-110" : "opacity-70 hover:opacity-100"
                         )}
                         title={c.id}
                       >
-                        {colorScheme === c.id && <div className="w-1 h-1 bg-white rounded-full shadow-sm"></div>}
+                        {colorScheme === c.id && <div className="w-1.5 h-1.5 bg-black/40 dark:bg-white/40 rounded-full"></div>}
                       </button>
                     ))}
                   </div>
                 </div>
 
                 {showShareInput && (
-                  <div className="px-4 py-2 bg-gray-50 border-y border-gray-100">
-                    <input 
-                      type="email" 
-                      placeholder="User email..."
-                      value={shareEmail}
-                      onChange={(e) => setShareEmail(e.target.value)}
-                      className="w-full px-2 py-1.5 text-[10px] border border-gray-200 rounded mb-2 outline-none focus:border-black"
-                    />
-                    <button 
-                      onClick={() => {
-                        onShareDashboard(shareEmail);
-                        setShareEmail('');
-                        setShowShareInput(false);
-                      }}
-                      className="w-full bg-black text-white py-1.5 rounded text-[9px] font-bold uppercase tracking-widest"
-                    >
-                      Grant Access
-                    </button>
+                  <div className="px-4 py-3 bg-gray-50 border-y border-gray-100">
+                    <div className="flex flex-col gap-2 mb-4">
+                      <input 
+                        type="email" 
+                        placeholder="User email..."
+                        value={shareEmail}
+                        onChange={(e) => setShareEmail(e.target.value)}
+                        className="w-full px-2 py-1.5 text-[10px] text-black placeholder:text-black bg-white border border-gray-200 rounded outline-none focus:border-black"
+                      />
+                      <button 
+                        onClick={() => {
+                          onShareDashboard(shareEmail);
+                          setShareEmail('');
+                        }}
+                        disabled={!shareEmail.trim()}
+                        className="w-full bg-black text-white py-1.5 rounded text-[9px] font-bold uppercase tracking-widest disabled:opacity-50"
+                      >
+                        Grant Access
+                      </button>
+                    </div>
+
+                    {collaborators.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Shared With</p>
+                        <div className="space-y-1 max-h-32 overflow-y-auto custom-scrollbar">
+                          {collaborators.map(email => (
+                            <div key={email} className="flex items-center justify-between bg-white px-2 py-1.5 rounded border border-gray-100 text-[10px]">
+                              <span className="truncate max-w-[140px] text-gray-600">{email}</span>
+                              {isOwner && (
+                                <button 
+                                  onClick={() => onRevokeAccess(email)}
+                                  className="text-red-500 hover:text-red-700 transition"
+                                  title="Revoke Access"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -373,7 +409,7 @@ export default function Header({
                   setEditName(dashboard.name);
                 }}
                 className={cn(
-                  "px-6 h-full flex items-center text-[11px] font-bold uppercase tracking-widest transition relative",
+                  "px-6 h-full flex items-center text-[11px] font-bold uppercase tracking-widest transition relative pr-9",
                   activeDashboardId === dashboard.id 
                     ? (theme === 'dark' ? "text-white border-b-2 border-white" : "text-black border-b-2 border-black")
                     : (theme === 'dark' ? "text-slate-500 hover:text-white border-b-2 border-transparent" : "text-gray-400 hover:text-black border-b-2 border-transparent")
@@ -383,18 +419,16 @@ export default function Header({
                 {dashboard.name}
               </button>
             )}
-            {activeDashboardId === dashboard.id && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onCloseDashboard(dashboard.id); }}
-                className={cn(
-                  "absolute right-1 p-1 rounded-full opacity-0 group-hover:opacity-100 transition hover:bg-gray-200 dark:hover:bg-slate-800",
-                  theme === 'dark' ? "text-slate-400" : "text-gray-400"
-                )}
-                title="Close Dashboard"
-              >
-                <X className="w-2.5 h-2.5" />
-              </button>
-            )}
+            <button
+              onClick={(e) => { e.stopPropagation(); onCloseDashboard(dashboard.id); }}
+              className={cn(
+                "absolute right-1 p-1 rounded-full opacity-0 group-hover:opacity-100 transition hover:bg-gray-200 dark:hover:bg-slate-800 focus:opacity-100",
+                theme === 'dark' ? "text-slate-400" : "text-gray-400"
+              )}
+              title="Close Dashboard"
+            >
+              <X className="w-2.5 h-2.5" />
+            </button>
           </div>
         ))}
         
@@ -403,7 +437,7 @@ export default function Header({
             <button
               onClick={() => setActiveDashboardId('latest-data')}
               className={cn(
-                "px-6 h-full flex items-center text-[11px] font-bold uppercase tracking-widest transition relative",
+                "px-6 h-full flex items-center text-[11px] font-bold uppercase tracking-widest transition relative pr-9",
                 activeDashboardId === 'latest-data'
                   ? (theme === 'dark' ? "text-white border-b-2 border-white" : "text-black border-b-2 border-black")
                   : (theme === 'dark' ? "text-slate-500 hover:text-white border-b-2 border-transparent" : "text-gray-400 hover:text-black border-b-2 border-transparent")
@@ -411,18 +445,16 @@ export default function Header({
             >
               Latest Data
             </button>
-            {activeDashboardId === 'latest-data' && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onCloseDashboard('latest-data'); }}
-                className={cn(
-                  "absolute right-1 p-1 rounded-full opacity-0 group-hover:opacity-100 transition hover:bg-gray-200 dark:hover:bg-slate-800",
-                  theme === 'dark' ? "text-slate-400" : "text-gray-400"
-                )}
-                title="Close Tab"
-              >
-                <X className="w-2.5 h-2.5" />
-              </button>
-            )}
+            <button
+              onClick={(e) => { e.stopPropagation(); onCloseDashboard('latest-data'); }}
+              className={cn(
+                "absolute right-1 p-1 rounded-full opacity-0 group-hover:opacity-100 transition hover:bg-gray-200 dark:hover:bg-slate-800 focus:opacity-100",
+                theme === 'dark' ? "text-slate-400" : "text-gray-400"
+              )}
+              title="Close Tab"
+            >
+              <X className="w-2.5 h-2.5" />
+            </button>
           </div>
         )}
         <button

@@ -1,11 +1,21 @@
-import { useMemo, useState } from 'react';
-import { CardConfig, EWReview } from '../types';
-import { applyFilters, getFilterSteps, getDateRange } from '../services/dataStore';
+import { useMemo, useState, useEffect } from 'react';
+import { CardConfig, EWReview, Dashboard } from '../types';
+import { applyFilters, getFilterSteps, getDateRange, getPreviousDateRange } from '../services/dataStore';
 import dayjs from 'dayjs';
 import isSameOrBefore from 'dayjs/plugin/isSameOrBefore';
 import { Bar, Line, Doughnut } from 'react-chartjs-2';
+import ReactMarkdown from 'react-markdown';
 
 dayjs.extend(isSameOrBefore);
+
+const getComparisonLabel = (period: string) => {
+  switch (period) {
+    case 'last_year': return 'Last Year';
+    case 'last_month': return 'Last Month';
+    case 'last_week': return 'Last Week';
+    default: return 'Previous Period';
+  }
+};
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -18,7 +28,7 @@ import {
   Tooltip,
   Legend,
 } from 'chart.js';
-import { Settings, Trash2, GripVertical, TrendingUp, TrendingDown, Minus, X, Info, Download, Filter, Maximize2, Copy, Check } from 'lucide-react';
+import { Settings, Trash2, GripVertical, TrendingUp, TrendingDown, Minus, Plus, X, Info, Download, Filter, Maximize2, Copy, Check, FileText } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -39,11 +49,12 @@ interface CardProps {
   card: CardConfig;
   reviews: EWReview[];
   globalExcludeListing: boolean;
-  globalColorScheme?: 'blue' | 'green' | 'red' | 'amber' | 'multi';
+  globalColorScheme?: Dashboard['colorScheme'];
   isEditMode: boolean;
   isSelected: boolean;
   isSampleData: boolean;
   onSelect: () => void;
+  onUpdate?: (update: Partial<CardConfig>) => void;
   onDuplicate?: () => void;
   onDelete: () => void | Promise<void>;
   theme?: 'light' | 'dark';
@@ -67,6 +78,9 @@ const InfoModal = ({ isOpen, onClose, card, reviews, globalExcludeListing, data,
   const revPeriod = filters.reviewedPeriod || 'all_time';
   const subRange = getDateRange(subPeriod);
   const revRange = getDateRange(revPeriod);
+
+  const prevSubRange = getPreviousDateRange(subPeriod, comparison.period);
+  const prevRevRange = getPreviousDateRange(revPeriod, comparison.period);
 
   const filterSteps = useMemo(() => {
     return getFilterSteps(reviews, card, globalExcludeListing);
@@ -156,14 +170,20 @@ const InfoModal = ({ isOpen, onClose, card, reviews, globalExcludeListing, data,
               <div className="grid grid-cols-2 gap-4">
                 <section>
                   <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Resolved Submission Range</h4>
-                  <div className="bg-slate-900 rounded-lg p-3 font-mono text-[10px] border border-slate-800 text-blue-400 text-center">
-                    {subRange ? `${dayjs(subRange.start).format('YYYY-MM-DD')} to ${dayjs(subRange.end).format('YYYY-MM-DD')}` : 'ALL TIME'}
+                  <div className="bg-slate-900 rounded-lg p-3 flex flex-col items-center justify-center font-mono text-[10px] border border-slate-800">
+                    <div className="text-blue-400">{subRange ? `${dayjs(subRange.start).format('YYYY-MM-DD')} to ${dayjs(subRange.end).format('YYYY-MM-DD')}` : 'ALL TIME'}</div>
+                    {comparison?.enabled && prevSubRange && (
+                       <div className="text-blue-400/50 mt-1">Prev: {dayjs(prevSubRange.start).format('YYYY-MM-DD')} to {dayjs(prevSubRange.end).format('YYYY-MM-DD')}</div>
+                    )}
                   </div>
                 </section>
                 <section>
                   <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Resolved Review Range</h4>
-                  <div className="bg-slate-900 rounded-lg p-3 font-mono text-[10px] border border-slate-800 text-emerald-400 text-center">
-                    {revRange ? `${dayjs(revRange.start).format('YYYY-MM-DD')} to ${dayjs(revRange.end).format('YYYY-MM-DD')}` : 'ALL TIME'}
+                  <div className="bg-slate-900 rounded-lg p-3 flex flex-col items-center justify-center font-mono text-[10px] border border-slate-800">
+                    <div className="text-emerald-400">{revRange ? `${dayjs(revRange.start).format('YYYY-MM-DD')} to ${dayjs(revRange.end).format('YYYY-MM-DD')}` : 'ALL TIME'}</div>
+                    {comparison?.enabled && prevRevRange && (
+                       <div className="text-emerald-400/50 mt-1">Prev: {dayjs(prevRevRange.start).format('YYYY-MM-DD')} to {dayjs(prevRevRange.end).format('YYYY-MM-DD')}</div>
+                    )}
                   </div>
                 </section>
               </div>
@@ -217,7 +237,8 @@ const EnlargedChartModal = ({
     options, 
     vizType, 
     title,
-    theme 
+    theme,
+    card
   }: { 
     isOpen: boolean; 
     onClose: () => void; 
@@ -226,7 +247,28 @@ const EnlargedChartModal = ({
     vizType: string;
     title: string;
     theme?: 'light' | 'dark';
+    card: CardConfig;
   }) => {
+  const modalChartData = useMemo(() => {
+    if (!chartData || theme !== 'light') return chartData;
+    
+    const comparisonLabel = getComparisonLabel(card.comparison.period || 'previous_period');
+    
+    // In light mode modal, we want the comparison series to BE light grey regardless of theme/scheme
+    const newDatasets = chartData.datasets.map((ds: any) => {
+      if (ds.label === comparisonLabel) {
+        return {
+          ...ds,
+          backgroundColor: vizType === 'bar' ? 'rgba(0, 0, 0, 0.05)' : 'transparent',
+          borderColor: '#d1d5db', // Light grey
+        };
+      }
+      return ds;
+    });
+
+    return { ...chartData, datasets: newDatasets };
+  }, [chartData, theme, vizType, card.comparison.period]);
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -258,10 +300,56 @@ const EnlargedChartModal = ({
                 <X className="w-6 h-6" />
               </button>
             </div>
-            <div className="flex-1 min-h-[400px]">
-              {vizType === 'bar' && <Bar data={chartData} options={{ ...options, maintainAspectRatio: false }} />}
-              {vizType === 'line' && <Line data={chartData} options={{ ...options, maintainAspectRatio: false }} />}
-              {vizType === 'pie' && <Doughnut data={chartData} options={{ ...options, maintainAspectRatio: false }} />}
+            <div className="flex-1 min-h-[450px] w-full">
+              {vizType === 'bar' && <Bar data={modalChartData} options={{ ...options, maintainAspectRatio: false, plugins: { ...options.plugins, legend: { ...options.plugins.legend, labels: { ...options.plugins.legend.labels, font: { size: 12, weight: 600 } } } } }} />}
+              {vizType === 'line' && <Line data={modalChartData} options={{ ...options, maintainAspectRatio: false, plugins: { ...options.plugins, legend: { ...options.plugins.legend, labels: { ...options.plugins.legend.labels, font: { size: 12, weight: 600 } } } } }} />}
+              {vizType === 'pie' && <Doughnut data={modalChartData} options={{ ...options, maintainAspectRatio: false }} />}
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+};
+
+const SummaryModal = ({ isOpen, onClose, summary, title, theme }: { isOpen: boolean; onClose: () => void; summary: string | null; title: string; theme: 'light' | 'dark' }) => {
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 0.5 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+          />
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0, y: 20 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.95, opacity: 0, y: 20 }}
+            className="bg-slate-950 text-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col relative z-20 border border-slate-800"
+          >
+            <div className="px-8 py-6 border-b border-slate-900 flex items-center justify-between">
+              <h3 className="text-xl font-bold text-white tracking-tight flex items-center gap-3">
+                <FileText className="w-5 h-5 text-blue-500" />
+                {title} Summary
+              </h3>
+              <button 
+                onClick={onClose}
+                className="p-2.5 bg-slate-900 text-white hover:text-white rounded-xl transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-10 text-base leading-relaxed text-white">
+              <div className="prose prose-invert max-w-none prose-p:text-white prose-headings:text-white prose-strong:text-white prose-ul:text-white prose-li:text-white">
+                <ReactMarkdown>{summary || 'No summary available.'}</ReactMarkdown>
+              </div>
+            </div>
+            <div className="px-8 py-6 bg-slate-900/50 text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center justify-between border-t border-slate-900">
+              <span>AI-Generated Analysis</span>
+              <span>Proprietary Insights Agent</span>
             </div>
           </motion.div>
         </div>
@@ -374,6 +462,7 @@ export default function Card({
   isSelected,
   isSampleData,
   onSelect,
+  onUpdate,
   onDuplicate,
   onDelete,
   theme = 'light'
@@ -381,6 +470,10 @@ export default function Card({
   const [showDetails, setShowDetails] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [showEnlarged, setShowEnlarged] = useState(false);
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
+  const [summary, setSummary] = useState<string | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
 
   const colors = useMemo(() => {
     const scheme = globalColorScheme || card.display.colorScheme || 'blue';
@@ -389,20 +482,137 @@ export default function Card({
       green: '#10b981',
       red: '#ef4444',
       amber: '#f59e0b',
-      multi: '#8b5cf6' 
+      multi: '#8b5cf6',
+      pastel: '#60A5FA',
+      warm: '#F59E0B',
+      midnight: '#A855F7',
+      forest: '#059669',
+      slate: '#F97316'
     };
+
+    const palette: Record<string, string[]> = {
+      blue: ['#3b82f6', '#93c5fd', '#1d4ed8', '#60a5fa'],
+      green: ['#10b981', '#6ee7b7', '#047857', '#34d399'],
+      red: ['#ef4444', '#f87171', '#b91c1c', '#fca5a5'],
+      amber: ['#f59e0b', '#fbbf24', '#b45309', '#fcd34d'],
+      multi: ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#ec4899'],
+      pastel: ['#D1FAE5', '#FCE7F3', '#FEF3C7', '#EDE9FE', '#DBEAFE'],
+      warm: ['#FDE68A', '#1F2937', '#6B7280', '#FFFBEB'],
+      midnight: ['#A855F7', '#22D3EE', '#818CF8', '#C084FC', '#4B5563'],
+      forest: ['#D1FAE5', '#F97316', '#06B6D4', '#65A30D', '#CA8A04'],
+      slate: ['#F39C12', '#464646', '#7F8C8D', '#BDC3C7', '#2C3E50']
+    };
+
+    const cardStyles: Record<string, { bg: string, text: string, border: string }> = {
+      blue: { bg: theme === 'dark' ? 'bg-slate-900' : 'bg-white', text: theme === 'dark' ? 'text-slate-100' : 'text-slate-900', border: 'border-slate-200 dark:border-slate-800' },
+      green: { bg: theme === 'dark' ? 'bg-slate-900' : 'bg-white', text: theme === 'dark' ? 'text-slate-100' : 'text-slate-900', border: 'border-slate-200 dark:border-slate-800' },
+      red: { bg: theme === 'dark' ? 'bg-slate-900' : 'bg-white', text: theme === 'dark' ? 'text-slate-100' : 'text-slate-900', border: 'border-slate-200 dark:border-slate-800' },
+      amber: { bg: theme === 'dark' ? 'bg-slate-900' : 'bg-white', text: theme === 'dark' ? 'text-slate-100' : 'text-slate-900', border: 'border-slate-200 dark:border-slate-800' },
+      multi: { bg: theme === 'dark' ? 'bg-slate-800' : 'bg-white', text: theme === 'dark' ? 'text-white' : 'text-slate-900', border: 'border-slate-200 dark:border-white/10' },
+      pastel: { bg: card.display.colorScheme === 'blue' ? 'bg-[#D0E8E3]' : card.display.colorScheme === 'red' ? 'bg-[#FDCFE1]' : 'bg-white', text: 'text-slate-900', border: 'border-transparent' },
+      warm: { bg: card.display.colorScheme === 'amber' ? 'bg-[#FFD93D]' : 'bg-white', text: 'text-slate-900', border: 'border-slate-200' },
+      midnight: { bg: 'bg-[#1A1C26]', text: 'text-slate-100', border: 'border-white/5' },
+      forest: { bg: 'bg-white', text: 'text-slate-900', border: 'border-slate-100' },
+      slate: { bg: 'bg-[#F3F3F3]', text: 'text-[oklch(0.42_0.01_0)]', border: 'border-[#E0E0E0]' }
+    };
+
     return {
       primary: mapping[scheme] || '#3b82f6',
-      bgOpacity: scheme === 'multi' ? 'rgba(139, 92, 246, 0.1)' : `rgba(59, 130, 246, 0.1)`
+      bgOpacity: scheme === 'multi' ? 'rgba(139, 92, 246, 0.1)' : `${mapping[scheme] || '#3b82f6'}1a`,
+      palette: palette[scheme] || palette.blue,
+      card: cardStyles[scheme] || cardStyles.blue,
+      isLight: scheme === 'pastel' || scheme === 'warm' || scheme === 'forest' || scheme === 'slate' || (theme === 'light' && (scheme === 'blue' || scheme === 'green' || scheme === 'red' || scheme === 'amber' || scheme === 'multi'))
     };
-  }, [globalColorScheme, card.display.colorScheme]);
+  }, [globalColorScheme, card.display.colorScheme, theme]);
+
+  const isLightCard = colors.isLight;
 
   const { currentData, prevData } = useMemo(() => {
     const current = applyFilters(reviews, card, globalExcludeListing);
-    // For comparison, we'd need to shift the ranges, but the current applyFilters doesn't take shift
-    // For now, let's just use current filtering. Benchmark logic might need separate handling later.
-    return { currentData: current, prevData: [] };
+    if (!card.comparison.enabled) return { currentData: current, prevData: [] };
+
+    const overrideOptions: any = {};
+    const subP = card.filters.submittedPeriod || (card.filters as any).period || 'all_time';
+    const revP = card.filters.reviewedPeriod || 'all_time';
+    const comparisonMode = card.comparison.period || 'previous_period';
+    
+    if (subP && subP !== 'all_time') {
+      overrideOptions.overrideSubRange = getPreviousDateRange(subP, comparisonMode);
+    }
+    if (revP && revP !== 'all_time') {
+      overrideOptions.overrideRevRange = getPreviousDateRange(revP, comparisonMode);
+    }
+    
+    const previous = applyFilters(reviews, card, globalExcludeListing, overrideOptions);
+    return { currentData: current, prevData: previous };
   }, [reviews, card, globalExcludeListing]);
+
+  useEffect(() => {
+    if (card.vizType !== 'summary') return;
+    
+    const controller = new AbortController();
+    const generateSummary = async () => {
+      setSummaryLoading(true);
+      setSummaryError(null);
+      try {
+        const response = await fetch('/api/summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            currentData,
+            prevData,
+            title: card.title,
+            config: {
+              comparisonEnabled: card.comparison.enabled,
+              period: card.comparison.period
+            }
+          }),
+          signal: controller.signal
+        });
+        
+        if (!response.ok) {
+          let errorMessage = 'Failed to generate summary';
+          const contentType = response.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            try {
+              const errData = await response.json();
+              errorMessage = errData.error || errorMessage;
+            } catch (e) {
+              // Ignore parse error
+            }
+          }
+          throw new Error(errorMessage);
+        }
+
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+          throw new Error('Received non-JSON response from server');
+        }
+
+        const data = await response.json();
+        setSummary(data.summary);
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          console.error('Summary error:', err);
+          setSummaryError(err.message);
+        }
+      } finally {
+        setSummaryLoading(false);
+      }
+    };
+
+    generateSummary();
+    return () => controller.abort();
+  }, [card.vizType, currentData, prevData, card.title, card.comparison.enabled, card.comparison.period]);
+
+  const handleResize = (dimension: 'w' | 'h', delta: number) => {
+    if (!onUpdate) return;
+    const current = card[dimension] || 1;
+    const next = Math.max(1, Math.min(4, current + delta));
+    if (next !== current) {
+      onUpdate({ [dimension]: next });
+    }
+  };
 
   const renderKPI = () => {
     const currentCount = currentData.length;
@@ -417,7 +627,7 @@ export default function Card({
         <motion.div 
           initial={{ scale: 0.9, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
-          className="text-4xl font-light tracking-tight text-gray-900 dark:text-white mb-2 group-hover/kpi:scale-105 transition-transform"
+          className="text-4xl font-light tracking-tight mb-2 group-hover/kpi:scale-105 transition-transform"
         >
           {currentCount.toLocaleString()}
         </motion.div>
@@ -446,14 +656,16 @@ export default function Card({
     }, {} as Record<string, number>);
 
     const sorted = Object.entries(grouped)
-      .sort((a: [string, number], b: [string, number]) => b[1] - a[1])
-      .slice(0, 5);
+      .sort((a: [string, number], b: [string, number]) => b[1] - a[1]);
+
+    const displayCount = card.h ? (card.h * 5) : 5;
+    const displayed = sorted.slice(0, displayCount);
 
     const maxCount = sorted.length > 0 ? sorted[0][1] : 0;
 
     return (
-      <div className="space-y-3 py-2 h-[200px] overflow-y-auto custom-scrollbar">
-        {sorted.length > 0 ? sorted.map(([name, count], idx) => (
+      <div className="space-y-3 py-2 h-full overflow-y-auto custom-scrollbar">
+        {displayed.length > 0 ? displayed.map(([name, count], idx) => (
           <div key={name} className="relative">
             <div className="flex items-center justify-between z-10 relative px-2 py-1">
               <div className="flex items-center gap-2">
@@ -463,9 +675,15 @@ export default function Card({
                 )}>
                   {idx + 1}
                 </span>
-                <span className="text-xs font-semibold text-gray-700 dark:text-slate-300 truncate max-w-[140px]">{name}</span>
+                <span className={cn(
+                  "text-xs font-semibold truncate max-w-[140px]",
+                  isLightCard ? "text-gray-700" : "text-gray-700 dark:text-slate-300"
+                )}>{name}</span>
               </div>
-              <span className="text-[11px] font-bold text-slate-900 dark:text-slate-100">{count}</span>
+              <span className={cn(
+                "text-[11px] font-bold",
+                isLightCard ? "text-slate-900" : "text-slate-900 dark:text-slate-100"
+              )}>{count}</span>
             </div>
             <div 
               className="absolute left-0 top-0 bottom-0 rounded-md transition-all duration-500"
@@ -513,25 +731,75 @@ export default function Card({
     const max = Math.max(...distribution.map(d => d.count), 1);
 
     return (
-      <div className="space-y-4 py-2 h-[200px] overflow-y-auto custom-scrollbar">
+      <div className="space-y-4 py-2 h-full overflow-y-auto custom-scrollbar">
         <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">
           {card.filters.daysCalculation === 'processing_time' ? 'Review Time' : 'Active Age'}
         </div>
         {distribution.map((d, i) => (
           <div key={i} className="space-y-1">
             <div className="flex justify-between items-center text-[10px]">
-              <span className="font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">{d.label}</span>
-              <span className="font-bold text-gray-900 dark:text-white">{d.count}</span>
+              <span className={cn(
+                "font-bold uppercase tracking-widest",
+                isLightCard ? "text-gray-500" : "text-gray-500 dark:text-gray-400"
+              )}>{d.label}</span>
+              <span className={cn(
+                "font-bold",
+                isLightCard ? "text-gray-900" : "text-gray-900 dark:text-white"
+              )}>{d.count}</span>
             </div>
             <div className="h-1.5 w-full bg-gray-100 dark:bg-slate-900 rounded-full overflow-hidden">
               <motion.div 
                 initial={{ width: 0 }}
                 animate={{ width: `${(d.count / max) * 100}%` }}
-                className="h-full bg-blue-500 rounded-full"
+                className="h-full rounded-full transition-colors duration-500"
+                style={{ backgroundColor: colors.primary }}
               />
             </div>
           </div>
         ))}
+      </div>
+    );
+  };
+
+  const renderSummary = () => {
+    if (summaryLoading) {
+      return (
+        <div className="flex flex-col items-center justify-center py-10 space-y-4 opacity-50 flex-1">
+          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          <div className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Analyzing trends...</div>
+        </div>
+      );
+    }
+
+    if (summaryError) {
+      return (
+        <div className="flex flex-col items-center justify-center py-10 space-y-2 text-center flex-1">
+          <div className="text-[10px] font-bold uppercase tracking-widest text-red-500">Analysis Failed</div>
+          <p className="text-[11px] text-gray-400 px-4">{summaryError}</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex-1 flex flex-col min-h-0">
+        <div 
+          className="flex-1 overflow-hidden relative group/summary cursor-pointer"
+          onClick={(e) => { e.stopPropagation(); setShowSummaryModal(true); }}
+        >
+          <div className={cn(
+            "text-sm leading-relaxed text-center px-2 pb-4",
+            isLightCard ? "text-slate-600" : "text-slate-300"
+          )}>
+            <ReactMarkdown>{summary || 'Initializing analysis engine...'}</ReactMarkdown>
+          </div>
+        </div>
+        <button 
+          onClick={(e) => { e.stopPropagation(); setShowSummaryModal(true); }}
+          className="mt-2 w-full py-2.5 rounded-xl border border-dashed border-gray-200 dark:border-slate-800 text-[10px] font-bold uppercase tracking-widest text-gray-400 hover:text-blue-500 hover:border-blue-500/50 transition-all flex items-center justify-center gap-2"
+        >
+          <Maximize2 className="w-3 h-3" />
+          Read Full Analysis
+        </button>
       </div>
     );
   };
@@ -551,7 +819,7 @@ export default function Card({
         labels,
         datasets: [{
           data,
-          backgroundColor: [colors.primary, '#4B5563', '#9CA3AF', '#D1D5DB', '#E5E7EB', '#000000'],
+          backgroundColor: colors.palette,
           borderWidth: 0,
         }]
       };
@@ -571,51 +839,152 @@ export default function Card({
       return { chartData, options };
     }
 
-    const interval = 'day'; // Default to day for simplicity
+    const interval = (card.display.groupBy === 'week' || card.display.groupBy === 'month' || card.display.groupBy === 'year') 
+      ? card.display.groupBy 
+      : 'day';
     
+    const dateField = card.filters.dateField || 'dateSubmitted';
+
+    // 1. Determine labels (based on current range)
     const currentGrouped = currentData.reduce((acc, curr) => {
-      const key = dayjs(curr[card.filters.dateField || 'dateSubmitted']).startOf(interval).format('YYYY-MM-DD');
+      const key = dayjs(curr[dateField]).startOf(interval).format('YYYY-MM-DD');
       acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
 
-    const labels = Object.keys(currentGrouped).sort();
+    // If comparison is enabled, we should also look at gaps in current that might have data in prev
+    let allLabelsSet = new Set(Object.keys(currentGrouped));
+    
+    // Calculate the time offset for potential gap filling in labels
+    const subP = card.filters.submittedPeriod || (card.filters as any).period || 'all_time';
+    const revP = card.filters.reviewedPeriod || 'all_time';
+    const comparisonMode = card.comparison.period || 'previous_period';
+    
+    // Pick the most relevant period for shifting. 
+    // Prioritize the one matching the plotted dateField, but fall back to the other if it's not all_time.
+    let activePeriod = dateField === 'dateReviewed' ? revP : subP;
+    if (activePeriod === 'all_time') {
+      activePeriod = subP !== 'all_time' ? subP : 'all_time'; 
+      if (activePeriod === 'all_time') activePeriod = revP; // final fallback to whatever revP is
+    }
+    
+    const currentRange = getDateRange(activePeriod);
+    const prevRange = getPreviousDateRange(activePeriod, comparisonMode);
+    let offset = 0;
+    let prevGroupedShifted: Record<string, number> = {};
 
+    if (card.comparison.enabled && prevData.length > 0 && currentRange && prevRange) {
+      offset = currentRange.end - prevRange.end; // Use end to end for more safety with 'now' ranges
+      prevGroupedShifted = prevData.reduce((acc, curr) => {
+        const originalDate = dayjs(curr[dateField]);
+        const shiftedDate = originalDate.add(offset, 'ms').startOf(interval).format('YYYY-MM-DD');
+        acc[shiftedDate] = (acc[shiftedDate] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      
+      Object.keys(prevGroupedShifted).forEach(k => allLabelsSet.add(k));
+    }
+
+    const labels = Array.from(allLabelsSet).sort();
     const data = labels.map(l => currentGrouped[l] || 0);
 
-    const chartData = {
-      labels: labels.map(l => dayjs(l).format(interval === 'day' ? 'MMM D' : interval === 'week' ? '[W]w' : 'MMM')),
-      datasets: [{
-        label: 'Current',
-        data,
-        backgroundColor: colors.primary,
-        borderColor: colors.primary,
+    const datasets: any[] = [{
+      label: 'Current Period',
+      data,
+      backgroundColor: card.vizType === 'bar' 
+        ? (card.display.colorScheme === 'multi' ? colors.palette : colors.palette[0]) 
+        : colors.primary,
+      borderColor: colors.primary,
+      tension: 0.1,
+      pointRadius: card.vizType === 'line' ? 2 : 0,
+      borderWidth: 1.5,
+      fill: false,
+    }];
+
+    // 2. Add comparison dataset if enabled
+    if (card.comparison.enabled && prevData.length > 0 && offset !== 0) {
+      const prevDataMapped = labels.map(l => prevGroupedShifted[l] || 0);
+      const isMidnightLight = theme === 'light' && (globalColorScheme === 'midnight' || card.display.colorScheme === 'midnight');
+      const comparisonLabel = getComparisonLabel(card.comparison.period || 'previous_period');
+
+      datasets.push({
+        label: comparisonLabel,
+        data: prevDataMapped,
+        backgroundColor: card.vizType === 'bar'
+          ? (theme === 'dark' ? 'rgba(226, 232, 240, 0.45)' : (isMidnightLight ? 'rgba(0, 0, 0, 0.08)' : 'rgba(0, 0, 0, 0.08)'))
+          : 'transparent',
+        borderColor: theme === 'dark' ? 'rgba(248, 250, 252, 0.75)' : (isMidnightLight ? '#cbd5e1' : 'rgba(0, 0, 0, 0.3)'),
+        borderDash: card.vizType === 'line' ? [5, 5] : undefined,
+        pointRadius: card.vizType === 'line' ? 2 : 0,
+        borderWidth: 1.5,
         tension: 0.1,
-        pointRadius: 0,
-        borderWidth: 2,
         fill: false,
-      }]
+      });
+    }
+
+    const chartData = {
+      labels: labels.map(l => {
+        const d = dayjs(l);
+        if (interval === 'year') return d.format('YYYY');
+        if (interval === 'month') {
+          return (card.comparison.enabled && card.comparison.period === 'last_year') 
+            ? d.format('MMM') 
+            : d.format('MMM YYYY');
+        }
+        if (interval === 'week') return `WC ${d.format('MMM D')}`;
+        return d.format('MMM D');
+      }),
+      datasets
     };
 
     const options = {
       responsive: true,
       maintainAspectRatio: false,
       plugins: { 
-        legend: { display: card.display.showLegend, labels: { boxWidth: 8, color: '#64748b', font: { size: 10, weight: 600 } } },
-        tooltip: { backgroundColor: '#1e293b', titleColor: '#f8fafc', bodyColor: '#f8fafc' }
+        legend: { 
+          display: card.display.showLegend || card.comparison.enabled, 
+          position: 'top' as const,
+          align: 'end' as const,
+          labels: { 
+            boxWidth: 8, 
+            boxHeight: 8,
+            color: theme === 'dark' ? '#94a3b8' : '#64748b', 
+            usePointStyle: true,
+            padding: 15,
+            font: { size: 10, weight: 600 } 
+          } 
+        },
+        tooltip: { 
+          backgroundColor: '#1e293b', 
+          titleColor: '#f8fafc', 
+          bodyColor: '#f8fafc',
+          padding: 10,
+          cornerRadius: 8,
+          bodyFont: { size: 11 },
+          titleFont: { size: 11, weight: 'bold' as const }
+        }
       },
       scales: {
-        y: { beginAtZero: true, grid: { color: 'rgba(148, 163, 184, 0.1)' }, border: { display: false }, ticks: { color: '#64748b', font: { size: 9 } } },
-        x: { grid: { display: false }, border: { display: false }, ticks: { color: '#64748b', font: { size: 9 } } }
+        y: { 
+          beginAtZero: true, 
+          grid: { color: theme === 'dark' ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.03)' }, 
+          border: { display: false }, 
+          ticks: { color: theme === 'dark' ? '#94a3b8' : '#64748b', font: { size: 9 } } 
+        },
+        x: { 
+          grid: { display: false }, 
+          border: { display: false }, 
+          ticks: { color: theme === 'dark' ? '#94a3b8' : '#64748b', font: { size: 9 } } 
+        }
       }
     };
 
     return { chartData, options };
-  }, [currentData, card, colors]);
+  }, [currentData, prevData, card, colors, theme]);
 
   const renderTable = () => {
     return (
-      <div className="overflow-x-auto h-[200px] border border-gray-100 dark:border-slate-800 rounded">
+      <div className="overflow-x-auto h-full border border-gray-100 dark:border-slate-800 rounded">
         <table className="w-full text-[10px] text-left border-collapse">
           <thead className="sticky top-0 bg-gray-50 dark:bg-slate-800 border-b border-gray-100 dark:border-slate-700 z-10">
             <tr className="uppercase tracking-widest text-gray-400 dark:text-slate-500 font-bold">
@@ -627,9 +996,18 @@ export default function Card({
           <tbody className="divide-y divide-gray-50 dark:divide-slate-800">
             {currentData.slice(0, 50).map((review, idx) => (
               <tr key={`${review.id}-${idx}`} className="hover:bg-gray-50/50 dark:hover:bg-slate-800/50 transition">
-                <td className="px-3 py-2 font-medium text-gray-900 dark:text-slate-200 truncate max-w-[120px]">{review.extensionName}</td>
-                <td className="px-3 py-2 uppercase font-bold text-[8px] text-gray-500 dark:text-slate-500">{review.status.replace('_', ' ')}</td>
-                <td className="px-3 py-2 text-gray-400 dark:text-slate-600">{dayjs(review[card.filters.dateField] || review.dateSubmitted).format('MMM D')}</td>
+                <td className={cn(
+                  "px-3 py-2 font-medium truncate max-w-[120px]",
+                  isLightCard ? "text-gray-900" : "text-gray-900 dark:text-slate-200"
+                )}>{review.extensionName}</td>
+                <td className={cn(
+                  "px-3 py-2 uppercase font-bold text-[8px]",
+                  isLightCard ? "text-gray-500" : "text-gray-500 dark:text-slate-500"
+                )}>{review.status.replace('_', ' ')}</td>
+                <td className={cn(
+                  "px-3 py-2",
+                  isLightCard ? "text-gray-400" : "text-gray-400 dark:text-slate-600"
+                )}>{dayjs(review[card.filters.dateField] || review.dateSubmitted).format('MMM D')}</td>
               </tr>
             ))}
           </tbody>
@@ -644,14 +1022,48 @@ export default function Card({
   return (
     <div 
       className={cn(
-        "bg-white dark:bg-slate-950 rounded-lg p-8 border transition-all duration-200 group flex flex-col h-full relative",
+        "rounded-3xl p-8 transition-all duration-300 group flex flex-col h-full relative",
+        colors.card.bg,
+        colors.card.text,
+        colors.card.border,
+        "border shadow-sm hover:shadow-md",
         isSelected 
           ? "border-black dark:border-white shadow-lg ring-1 ring-black dark:ring-white/20" 
-          : "border-gray-200 dark:border-slate-800 shadow-sm hover:shadow-md",
-        isEditMode && "cursor-default ring-2 ring-gray-50 dark:ring-slate-900 ring-offset-2 dark:ring-offset-slate-950"
+          : "",
+        isEditMode && "cursor-default ring-2 ring-gray-50 dark:ring-slate-900 ring-offset-2 dark:ring-offset-slate-950",
+        // Width and Height Spans
+        card.w === 2 && "xl:col-span-2",
+        card.w === 3 && "xl:col-span-3",
+        card.w === 4 && "xl:col-span-4",
+        card.h === 2 && "row-span-2",
+        card.h === 3 && "row-span-3",
+        card.h === 4 && "row-span-4"
       )}
       onClick={() => isEditMode && onSelect()}
     >
+      {/* Resize Handles */}
+      {isEditMode && (
+        <>
+          {/* Left / Right (Width) */}
+          <div className="absolute inset-y-0 left-0 w-6 flex flex-col items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+            <button onClick={(e) => { e.stopPropagation(); handleResize('w', -1); }} className="p-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700"><Minus className="w-2.5 h-2.5" /></button>
+            <button onClick={(e) => { e.stopPropagation(); handleResize('w', 1); }} className="p-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700"><Plus className="w-2.5 h-2.5" /></button>
+          </div>
+          <div className="absolute inset-y-0 right-0 w-6 flex flex-col items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+            <button onClick={(e) => { e.stopPropagation(); handleResize('w', -1); }} className="p-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700"><Minus className="w-2.5 h-2.5" /></button>
+            <button onClick={(e) => { e.stopPropagation(); handleResize('w', 1); }} className="p-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700"><Plus className="w-2.5 h-2.5" /></button>
+          </div>
+          {/* Top / Bottom (Height) */}
+          <div className="absolute inset-x-0 top-0 h-6 flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+            <button onClick={(e) => { e.stopPropagation(); handleResize('h', -1); }} className="p-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700"><Minus className="w-2.5 h-2.5" /></button>
+            <button onClick={(e) => { e.stopPropagation(); handleResize('h', 1); }} className="p-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700"><Plus className="w-2.5 h-2.5" /></button>
+          </div>
+          <div className="absolute inset-x-0 bottom-0 h-6 flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+            <button onClick={(e) => { e.stopPropagation(); handleResize('h', -1); }} className="p-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700"><Minus className="w-2.5 h-2.5" /></button>
+            <button onClick={(e) => { e.stopPropagation(); handleResize('h', 1); }} className="p-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700"><Plus className="w-2.5 h-2.5" /></button>
+          </div>
+        </>
+      )}
       {isSampleData && (
         <div className="absolute top-3 right-3 flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 text-amber-600 border border-amber-100 rounded text-[7px] font-bold uppercase tracking-widest pointer-events-none">
           Placeholder
@@ -661,7 +1073,7 @@ export default function Card({
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-2 max-w-full">
           {isEditMode && <GripVertical className="drag-handle w-5 h-5 text-gray-200 cursor-grab active:cursor-grabbing hover:text-black transition flex-shrink-0" />}
-          <h3 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest truncate">{card.title}</h3>
+          <h3 className="text-[11px] font-bold uppercase tracking-widest truncate opacity-60">{card.title}</h3>
         </div>
         <div className="flex items-center gap-1">
           {!isEditMode && (
@@ -702,22 +1114,22 @@ export default function Card({
         </div>
       </div>
 
-      <div className="flex-1 min-h-[160px]">
+      <div className="flex-1 flex flex-col min-h-0 min-w-0">
         {card.vizType === 'kpi' && renderKPI()}
         {(card.vizType === 'bar' || card.vizType === 'line' || card.vizType === 'pie') && (
            <div 
-             className="relative group/chart cursor-zoom-in" 
+             className="relative group/chart cursor-zoom-in flex-1 min-h-0" 
              onClick={(e) => { e.stopPropagation(); setShowEnlarged(true); }}
            >
              <div className="absolute inset-0 bg-white/0 group-hover/chart:bg-black/5 flex items-center justify-center transition-colors z-10 rounded">
                <Maximize2 className="w-6 h-6 text-black opacity-0 group-hover/chart:opacity-100 transition-opacity translate-y-2 group-hover/chart:translate-y-0 duration-200" />
              </div>
              {card.vizType === 'pie' ? (
-                <div className="h-[200px] w-full flex items-center justify-center">
+                <div className="h-full w-full flex items-center justify-center">
                   <Doughnut data={chartInfo.chartData} options={chartInfo.options} />
                 </div>
              ) : (
-                <div className="h-[200px]">
+                <div className="h-full w-full">
                   {card.vizType === 'bar' ? (
                     <Bar data={chartInfo.chartData} options={chartInfo.options} />
                   ) : (
@@ -727,9 +1139,10 @@ export default function Card({
              )}
            </div>
         )}
-        {card.vizType === 'leaderboard' && renderLeaderboard()}
-        {card.vizType === 'days' && renderDays()}
-        {card.vizType === 'table' && renderTable()}
+        {card.vizType === 'leaderboard' && <div className="h-full">{renderLeaderboard()}</div>}
+        {card.vizType === 'days' && <div className="h-full">{renderDays()}</div>}
+        {card.vizType === 'table' && <div className="h-full">{renderTable()}</div>}
+        {card.vizType === 'summary' && renderSummary()}
       </div>
 
       <DetailModal 
@@ -757,14 +1170,40 @@ export default function Card({
         vizType={card.vizType}
         title={card.title}
         theme={theme}
+        card={card}
+      />
+
+      <SummaryModal 
+        isOpen={showSummaryModal}
+        onClose={() => setShowSummaryModal(false)}
+        summary={summary}
+        title={card.title}
+        theme={theme}
       />
 
       {(card.display.showTotal && (card.vizType === 'bar' || card.vizType === 'line' || card.vizType === 'table')) && (
         <div className="mt-6 pt-6 border-t border-gray-100 dark:border-slate-900 text-[11px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest flex items-center justify-between">
           <span>Aggregate Sum:</span>
-          <span className="text-black dark:text-white ml-1 bg-gray-50 dark:bg-slate-900 px-2 py-0.5 rounded border border-gray-100 dark:border-slate-800 shadow-sm">
-            {currentData.length.toLocaleString()}
-          </span>
+          <div className="flex items-center gap-2 font-mono">
+            {card.comparison.enabled && prevData && (
+              <span className={cn(
+                "font-bold text-[10px]",
+                theme === 'dark' ? "text-slate-100 opacity-90" : "text-gray-500 opacity-100"
+              )}>
+                {prevData.length.toLocaleString()}
+                <span className="mx-1.5 opacity-40 font-normal text-gray-500">vs</span>
+              </span>
+            )}
+            <span 
+              className={cn(
+                "px-2 py-0.5 rounded border shadow-sm",
+                theme === 'dark' ? "text-white bg-slate-900 border-slate-800" : "bg-gray-50 border-gray-100"
+              )}
+              style={{ color: theme === 'light' ? colors.primary : undefined }}
+            >
+              {currentData.length.toLocaleString()}
+            </span>
+          </div>
         </div>
       )}
     </div>

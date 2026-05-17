@@ -1,5 +1,5 @@
 import { CardConfig, VizType } from '../types';
-import { X, Hash, BarChart3, LineChart, PieChart, Trophy, Calendar, Filter, MousePointer2, Info, Table as TableIcon } from 'lucide-react';
+import { X, Hash, BarChart3, LineChart, PieChart, Trophy, Calendar, Filter, MousePointer2, Info, Table as TableIcon, FileText } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -38,6 +38,7 @@ export default function ConfigPanel({
     { type: 'leaderboard', icon: Trophy, label: 'Rank', info: 'A sorted list showing the top performers based on the current data slice.' },
     { type: 'days', icon: Calendar, label: 'Days', info: 'Segment items based on their age in the system (Submitted to Today or Reviewed).' },
     { type: 'table', icon: TableIcon, label: 'Table', info: 'Provides a detailed list of all records matching your filter criteria.' },
+    { type: 'summary', icon: FileText, label: 'Summary', info: 'AI-generated summary of findings, trends, and benchmarks based on current data.' },
   ];
 
   const updateFilters = (update: any) => {
@@ -262,6 +263,7 @@ export default function ConfigPanel({
                           {[
                             { id: 'today', label: 'Today' },
                             { id: 'yesterday', label: 'Yesterday' },
+                            { id: 'past_7', label: 'Past 7' },
                             { id: 'past_30', label: 'Past 30' },
                             { id: 'past_90', label: 'Past 90' },
                             { id: 'this_year', label: 'This Year' },
@@ -293,6 +295,7 @@ export default function ConfigPanel({
                           {[
                             { id: 'today', label: 'Today' },
                             { id: 'yesterday', label: 'Yesterday' },
+                            { id: 'past_7', label: 'Past 7' },
                             { id: 'past_30', label: 'Past 30' },
                             { id: 'past_90', label: 'Past 90' },
                             { id: 'this_year', label: 'This Year' },
@@ -424,7 +427,10 @@ export default function ConfigPanel({
                   
                   {card.comparison.enabled && (
                     <div className="grid grid-cols-2 gap-2 mt-4">
-                      {['previous_period', 'last_week', 'last_month', 'last_year'].map((p) => (
+                      {(card.vizType === 'bar' || card.vizType === 'line' 
+                        ? ['previous_period', 'last_year'] 
+                        : ['previous_period', 'last_week', 'last_month', 'last_year']
+                      ).map((p) => (
                         <button
                           key={p}
                           onClick={() => onUpdate({ comparison: { ...card.comparison, period: p as any } })}
@@ -471,6 +477,36 @@ export default function ConfigPanel({
                       className="w-3.5 h-3.5 accent-black dark:accent-white"
                     />
                   </label>
+
+                  {(card.vizType === 'bar' || card.vizType === 'line') && (
+                    <div className="p-4 bg-gray-50 dark:bg-slate-900 rounded-lg">
+                      <div className="flex items-center mb-3">
+                        <span className="text-[11px] font-bold text-gray-500 uppercase tracking-widest">Time Grouping</span>
+                        <Tooltip text="Aggregate data points by the selected interval. This helps readability when viewing large date ranges." />
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {[
+                          { id: 'day', label: 'Day' },
+                          { id: 'week', label: 'Week' },
+                          { id: 'month', label: 'Month' },
+                          { id: 'year', label: 'Year' }
+                        ].map((g) => (
+                          <button
+                            key={g.id}
+                            onClick={() => updateDisplay({ groupBy: g.id })}
+                            className={cn(
+                              "flex-1 px-2 py-1.5 rounded text-[9px] font-bold uppercase tracking-widest border transition",
+                              (card.display.groupBy || 'day') === g.id
+                                ? "bg-black text-white border-black dark:bg-white dark:text-black dark:border-white"
+                                : "bg-white dark:bg-slate-950 text-gray-400 border-gray-100 dark:border-slate-800 hover:border-gray-200"
+                            )}
+                          >
+                            {g.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </section>
             </div>
