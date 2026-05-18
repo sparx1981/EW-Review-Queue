@@ -12,6 +12,7 @@ const FIELD_MAP: Record<keyof EWReview, string[]> = {
   isListingPage: ['listingPage', 'listing_page', 'isListing', 'is_listing'],
   version: ['version', 'versionNumber', 'version_number'],
   developer: ['developer', 'developerName', 'developer_name', 'author'],
+  reviewerFeedback: ['reviewerFeedback', 'reviewer_feedback', 'reason', 'feedback', 'comments', 'review_comments', 'denial_reason'],
 };
 
 const STATUS_MAP: Record<string, string[]> = {
@@ -99,6 +100,7 @@ export function normalizeReview(raw: any): EWReview {
     isListingPage: isListingFlag || LISTING_PAGE_REGEX.test(extensionName),
     version: resolveField(raw, FIELD_MAP.version),
     developer: resolveField(raw, FIELD_MAP.developer),
+    reviewerFeedback: resolveField(raw, FIELD_MAP.reviewerFeedback),
   };
 }
 

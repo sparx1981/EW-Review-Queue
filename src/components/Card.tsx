@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { CardConfig, EWReview, Dashboard } from '../types';
 import { applyFilters, getFilterSteps, getDateRange, getPreviousDateRange } from '../services/dataStore';
 import dayjs from 'dayjs';
@@ -28,7 +28,7 @@ import {
   Tooltip,
   Legend,
 } from 'chart.js';
-import { Settings, Trash2, GripVertical, TrendingUp, TrendingDown, Minus, Plus, X, Info, Download, Filter, Maximize2, Copy, Check, FileText } from 'lucide-react';
+import { Settings, Trash2, GripVertical, TrendingUp, TrendingDown, Minus, Plus, X, Info, Download, Filter, Maximize2, Copy, Check, FileText, Send, Eraser, MessageSquareCode } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -312,6 +312,174 @@ const EnlargedChartModal = ({
   );
 };
 
+const ChatModal = ({ isOpen, onClose, messages, onSend, onClear, isLoading, theme }: { 
+  isOpen: boolean; 
+  onClose: () => void; 
+  messages: { role: 'user' | 'ai', text: string }[];
+  onSend: (text: string) => void;
+  onClear: () => void;
+  isLoading: boolean;
+  theme: 'light' | 'dark' 
+}) => {
+  const [input, setInput] = useState('');
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages, isLoading]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || isLoading) return;
+    onSend(input);
+    setInput('');
+  };
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 z-[140] flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 0.5 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+          />
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0, y: 20 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.95, opacity: 0, y: 20 }}
+            className={cn(
+              "rounded-3xl shadow-2xl w-full max-w-4xl h-[80vh] overflow-hidden flex flex-col relative z-20 border",
+              theme === 'dark' ? "bg-slate-950 border-slate-800" : "bg-white border-gray-200"
+            )}
+          >
+            <div className={cn(
+               "px-8 py-6 border-b flex items-center justify-between",
+               theme === 'dark' ? "bg-slate-950 border-slate-900" : "bg-white border-gray-100"
+            )}>
+              <div className="flex items-center gap-3">
+                <MessageSquareCode className="w-5 h-5 text-blue-500" />
+                <h3 className={cn(
+                  "text-xl font-bold tracking-tight",
+                  theme === 'dark' ? "text-white" : "text-gray-900"
+                )}>AI Data Chat</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={onClear}
+                  className="p-2 text-gray-400 hover:text-red-500 transition"
+                  title="Clear Chat"
+                >
+                  <Eraser className="w-5 h-5" />
+                </button>
+                <button 
+                  onClick={onClose}
+                  className={cn(
+                    "p-2.5 text-gray-400 transition rounded-xl",
+                    theme === 'dark' ? "bg-slate-900 hover:text-white" : "bg-gray-100 hover:text-gray-900"
+                  )}
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div ref={scrollRef} className={cn(
+              "flex-1 overflow-auto p-8 space-y-6",
+              theme === 'dark' ? "bg-slate-900/10" : "bg-white"
+            )}>
+              {messages.length === 0 && !isLoading && (
+                <div className={cn(
+                  "h-full flex flex-col items-center justify-center text-center opacity-40",
+                  theme === 'dark' ? "text-slate-400" : "text-gray-500"
+                )}>
+                  <MessageSquareCode className="w-12 h-12 mb-4" />
+                  <p className="text-sm font-medium">Ask anything about the full dataset.</p>
+                  <p className="text-[10px] uppercase tracking-widest mt-1">E.g. "Who has the most approvals this month?"</p>
+                </div>
+              )}
+              {messages.map((m, i) => (
+                <div key={i} className={cn(
+                  "flex flex-col max-w-[85%]",
+                  m.role === 'user' ? "ml-auto items-end" : "mr-auto items-start"
+                )}>
+                  <div className={cn(
+                    "px-4 py-3 rounded-2xl text-sm",
+                    m.role === 'user' 
+                      ? "bg-blue-600 text-white rounded-tr-none shadow-md" 
+                      : cn(
+                        "border rounded-tl-none shadow-sm",
+                        theme === 'dark' 
+                          ? "bg-slate-900 text-slate-200 border-slate-800" 
+                          : "bg-gray-50 text-gray-800 border-gray-100"
+                      )
+                  )}>
+                    <div className={cn(
+                      "prose prose-sm max-w-none",
+                      theme === 'dark' ? "dark:prose-invert" : ""
+                    )}>
+                      <ReactMarkdown>{m.text || ''}</ReactMarkdown>
+                    </div>
+                  </div>
+                  <span className="text-[9px] uppercase tracking-widest font-bold text-gray-400 mt-1.5 px-1">
+                    {m.role === 'user' ? 'You' : 'Dashboard AI'}
+                  </span>
+                </div>
+              ))}
+              {isLoading && (
+                <div className="flex flex-col mr-auto items-start">
+                  <div className={cn(
+                    "px-4 py-3 border rounded-2xl rounded-tl-none shadow-sm flex items-center gap-2",
+                    theme === 'dark' ? "bg-slate-900 border-slate-800" : "bg-white border-gray-100"
+                  )}>
+                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
+                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={handleSubmit} className={cn(
+              "p-6 border-t",
+              theme === 'dark' ? "bg-slate-950 border-slate-900" : "bg-white border-gray-100"
+            )}>
+              <div className="relative flex items-center">
+                <input 
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Ask a question..."
+                  className={cn(
+                    "w-full border rounded-2xl px-6 py-4 pr-24 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition",
+                    theme === 'dark' 
+                      ? "bg-slate-900 border-slate-800 text-white placeholder:text-slate-500" 
+                      : "bg-gray-100 border-gray-200 text-gray-900 placeholder:text-gray-400"
+                  )}
+                  disabled={isLoading}
+                />
+                <div className="absolute right-3 flex items-center gap-2">
+                  <button 
+                    type="submit"
+                    disabled={!input.trim() || isLoading}
+                    className="p-2.5 bg-blue-600 text-white rounded-xl shadow-lg hover:bg-blue-700 disabled:opacity-50 disabled:grayscale transition active:scale-95"
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+};
+
 const SummaryModal = ({ isOpen, onClose, summary, title, theme }: { isOpen: boolean; onClose: () => void; summary: string | null; title: string; theme: 'light' | 'dark' }) => {
   return (
     <AnimatePresence>
@@ -343,7 +511,7 @@ const SummaryModal = ({ isOpen, onClose, summary, title, theme }: { isOpen: bool
               </button>
             </div>
             <div className="flex-1 overflow-auto p-10 text-base leading-relaxed text-white">
-              <div className="prose prose-invert max-w-none prose-p:text-white prose-headings:text-white prose-strong:text-white prose-ul:text-white prose-li:text-white">
+              <div className="prose prose-invert max-w-none [&_*]:text-white!">
                 <ReactMarkdown>{summary || 'No summary available.'}</ReactMarkdown>
               </div>
             </div>
@@ -474,6 +642,10 @@ export default function Card({
   const [summary, setSummary] = useState<string | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'ai', text: string }[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const [showChatModal, setShowChatModal] = useState(false);
 
   const colors = useMemo(() => {
     const scheme = globalColorScheme || card.display.colorScheme || 'blue';
@@ -547,61 +719,76 @@ export default function Card({
     return { currentData: current, prevData: previous };
   }, [reviews, card, globalExcludeListing]);
 
-  useEffect(() => {
+  const generateSummary = async (signal?: AbortSignal) => {
     if (card.vizType !== 'summary') return;
-    
-    const controller = new AbortController();
-    const generateSummary = async () => {
-      setSummaryLoading(true);
-      setSummaryError(null);
-      try {
-        const response = await fetch('/api/summary', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            currentData,
-            prevData,
-            title: card.title,
-            config: {
-              comparisonEnabled: card.comparison.enabled,
-              period: card.comparison.period
-            }
-          }),
-          signal: controller.signal
-        });
-        
-        if (!response.ok) {
-          let errorMessage = 'Failed to generate summary';
-          const contentType = response.headers.get('content-type');
-          if (contentType && contentType.includes('application/json')) {
-            try {
-              const errData = await response.json();
-              errorMessage = errData.error || errorMessage;
-            } catch (e) {
-              // Ignore parse error
-            }
-          }
-          throw new Error(errorMessage);
-        }
+    setSummaryLoading(true);
+    setSummaryError(null);
 
-        const contentType = response.headers.get('content-type');
-        if (!contentType || !contentType.includes('application/json')) {
-          throw new Error('Received non-JSON response from server');
-        }
-
-        const data = await response.json();
-        setSummary(data.summary);
-      } catch (err: any) {
-        if (err.name !== 'AbortError') {
-          console.error('Summary error:', err);
-          setSummaryError(err.message);
-        }
-      } finally {
-        setSummaryLoading(false);
-      }
+    // ── Trim data to essential fields to prevent 413 Payload Too Large ──
+    const trim = (records: EWReview[]) => {
+      if (!records) return [];
+      // Only keep fields used by the backend's summarizeData logic
+      return records.map(r => ({
+        status: r.status,
+        dateSubmitted: r.dateSubmitted,
+        dateReviewed: r.dateReviewed,
+        reviewerName: r.reviewerName,
+        developer: r.developer,
+        reviewerFeedback: r.reviewerFeedback
+      }));
     };
 
-    generateSummary();
+    try {
+      const response = await fetch('/api/summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentData: trim(currentData),
+          prevData: trim(prevData),
+          title: card.title,
+          config: {
+            comparisonEnabled: card.comparison.enabled,
+            period: card.comparison.period
+          }
+        }),
+        signal
+      });
+      
+      if (!response.ok) {
+        let errorMessage = 'Failed to generate summary';
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          try {
+            const errData = await response.json();
+            errorMessage = errData.error || errorMessage;
+          } catch (e) {
+            // Ignore parse error
+          }
+        }
+        throw new Error(errorMessage);
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('Received non-JSON response from server');
+      }
+
+      const data = await response.json();
+      setSummary(data.summary);
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        console.error('Summary error:', err);
+        setSummaryError(err.message);
+      }
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (card.vizType !== 'summary') return;
+    const controller = new AbortController();
+    generateSummary(controller.signal);
     return () => controller.abort();
   }, [card.vizType, currentData, prevData, card.title, card.comparison.enabled, card.comparison.period]);
 
@@ -614,8 +801,182 @@ export default function Card({
     }
   };
 
+  const handleRetrySummary = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    generateSummary();
+  };
+
+  const handleSendMessage = async (input: string) => {
+    if (!input.trim() || isChatLoading) return;
+    
+    // Trim data used for analysis to prevent 413 Payload Too Large
+    const trim = (records: EWReview[]) => {
+      if (!records) return [];
+      return records.map(r => ({
+        status: r.status,
+        reviewerName: r.reviewerName,
+        developer: r.developer,
+        dateSubmitted: r.dateSubmitted,
+        dateReviewed: r.dateReviewed,
+        extensionName: r.extensionName,
+        reviewerFeedback: r.reviewerFeedback
+      }));
+    };
+
+    const newUserMessage = { role: 'user' as const, text: input };
+    setChatMessages(prev => [...prev, newUserMessage]);
+    setIsChatLoading(true);
+    
+    let attempts = 0;
+    const maxAttempts = 3;
+    let finalResponse = "";
+
+    while (attempts < maxAttempts) {
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fullData: trim(reviews), 
+            question: input,
+            history: chatMessages
+          })
+        });
+        
+        if (!response.ok) throw new Error('Chat failed');
+        
+        const data = await response.json();
+        const text = data.response;
+
+        if (text && text !== "No response generated.") {
+          finalResponse = text;
+          break;
+        } else {
+          attempts++;
+          if (attempts < maxAttempts) {
+            // Small delay between retries
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
+      } catch (err) {
+        console.error(err);
+        attempts++;
+        if (attempts >= maxAttempts) {
+          finalResponse = "Error: Failed to connect to AI service.";
+        }
+      }
+    }
+
+    if (!finalResponse || finalResponse === "No response generated.") {
+      finalResponse = "I'm sorry, I was unable to generate a response after several attempts. Please try rephrasing your question or contact your administrator.";
+    }
+
+    setChatMessages(prev => [...prev, { role: 'ai', text: finalResponse }]);
+    setIsChatLoading(false);
+  };
+
+  const renderChat = () => {
+    return (
+      <div className="flex flex-col h-full space-y-4">
+        <div 
+          className={cn(
+            "flex-1 min-h-0 rounded-2xl p-4 overflow-y-auto custom-scrollbar cursor-pointer relative border shadow-sm transition-colors",
+            theme === 'dark' ? "bg-slate-900 border-slate-800" : "bg-white border-gray-100"
+          )}
+          onClick={() => setShowChatModal(true)}
+        >
+          {chatMessages.length === 0 ? (
+            <div className={cn(
+              "h-full flex flex-col items-center justify-center text-center opacity-30",
+              theme === 'dark' ? "text-slate-400" : "text-gray-500"
+            )}>
+              <MessageSquareCode className="w-8 h-8 mb-2" />
+              <p className="text-[10px] font-bold uppercase tracking-widest leading-relaxed">
+                Expand to ask dataset questions
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {chatMessages.slice(-3).map((m, i) => (
+                <div key={i} className={cn(
+                  "flex flex-col",
+                  m.role === 'user' ? "items-end" : "items-start"
+                )}>
+                  <div className={cn(
+                    "px-3 py-2 rounded-xl text-[10px] max-w-[90%] leading-snug",
+                    m.role === 'user' 
+                      ? "bg-blue-600 text-white rounded-tr-none shadow-sm" 
+                      : cn(
+                         "border rounded-tl-none shadow-xs",
+                         theme === 'dark' ? "bg-slate-800 text-slate-200 border-white/5" : "bg-gray-50 text-gray-800 border-gray-100"
+                      )
+                  )}>
+                    {(m.text || '').length > 100 ? (m.text || '').substring(0, 100) + '...' : (m.text || '')}
+                  </div>
+                </div>
+              ))}
+              {isChatLoading && (
+                <div className="flex items-center gap-1 opacity-50 ml-1">
+                  <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                  <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]" />
+                  <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" />
+                </div>
+              )}
+            </div>
+          )}
+          <div className="absolute top-2 right-2 flex items-center gap-1">
+             <button 
+              onClick={(e) => { e.stopPropagation(); setChatMessages([]); }}
+              className={cn(
+                "p-1.5 rounded-lg transition text-gray-300 hover:text-red-500",
+                theme === 'dark' ? "hover:bg-red-900/20" : "hover:bg-red-50"
+              )}
+              title="Clear"
+            >
+              <Eraser className="w-3 h-3" />
+            </button>
+            <Maximize2 className="w-3 h-3 text-gray-300" />
+          </div>
+        </div>
+
+        <div className="flex gap-2 relative">
+          <input 
+            type="text"
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && chatInput.trim()) {
+                handleSendMessage(chatInput);
+                setChatInput('');
+              }
+            }}
+            placeholder="Ask anything..."
+            className={cn(
+              "flex-1 border rounded-xl px-4 py-3 text-[11px] focus:ring-1 focus:ring-blue-500/50 shadow-inner transition-colors",
+              theme === 'dark' 
+                ? "bg-slate-900 border-slate-800 text-white placeholder:text-gray-400" 
+                : "bg-gray-100 border-gray-200 text-gray-900 placeholder:text-gray-400"
+            )}
+          />
+          <button 
+            onClick={() => {
+              if (chatInput.trim()) {
+                handleSendMessage(chatInput);
+                setChatInput('');
+              }
+            }}
+            disabled={!chatInput.trim() || isChatLoading}
+            className="p-3 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl hover:opacity-90 transition disabled:opacity-50 shadow-lg"
+          >
+            <Send className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   const renderKPI = () => {
-    const currentCount = currentData.length;
+    const currentCount = currentData?.length ?? 0;
     const prevCount = prevData?.length ?? 0;
     const delta = prevCount > 0 ? ((currentCount - prevCount) / prevCount) * 100 : 0;
 
@@ -710,7 +1071,7 @@ export default function Card({
     ];
 
     const distribution = buckets.map(b => {
-      const count = currentData.filter(item => {
+      const count = (currentData || []).filter(item => {
         const subDate = item.dateSubmitted ? dayjs(item.dateSubmitted) : null;
         const revDate = item.dateReviewed ? dayjs(item.dateReviewed) : null;
         if (!subDate) return false;
@@ -773,9 +1134,15 @@ export default function Card({
 
     if (summaryError) {
       return (
-        <div className="flex flex-col items-center justify-center py-10 space-y-2 text-center flex-1">
+        <div className="flex flex-col items-center justify-center py-10 space-y-4 text-center flex-1">
           <div className="text-[10px] font-bold uppercase tracking-widest text-red-500">Analysis Failed</div>
-          <p className="text-[11px] text-gray-400 px-4">{summaryError}</p>
+          <p className="text-[11px] text-gray-400 px-4 max-w-[200px]">{summaryError}</p>
+          <button 
+            onClick={handleRetrySummary}
+            className="px-4 py-2 bg-slate-100 dark:bg-slate-800 rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-200 dark:hover:bg-slate-700 transition"
+          >
+            Retry Analysis
+          </button>
         </div>
       );
     }
@@ -783,19 +1150,26 @@ export default function Card({
     return (
       <div className="flex-1 flex flex-col min-h-0">
         <div 
-          className="flex-1 overflow-hidden relative group/summary cursor-pointer"
+          className="flex-1 relative group/summary cursor-pointer overflow-hidden max-h-[160px]"
           onClick={(e) => { e.stopPropagation(); setShowSummaryModal(true); }}
         >
           <div className={cn(
-            "text-sm leading-relaxed text-center px-2 pb-4",
+            "text-sm leading-relaxed text-center px-2 pb-10",
             isLightCard ? "text-slate-600" : "text-slate-300"
           )}>
             <ReactMarkdown>{summary || 'Initializing analysis engine...'}</ReactMarkdown>
           </div>
+          {/* Subtle fade to indicate more content */}
+          <div className={cn(
+            "absolute bottom-0 left-0 right-0 h-16 pointer-events-none",
+            isLightCard 
+              ? "bg-gradient-to-t from-white via-white/80 to-transparent" 
+              : "bg-gradient-to-t from-slate-900 via-slate-900/80 to-transparent"
+          )} />
         </div>
         <button 
           onClick={(e) => { e.stopPropagation(); setShowSummaryModal(true); }}
-          className="mt-2 w-full py-2.5 rounded-xl border border-dashed border-gray-200 dark:border-slate-800 text-[10px] font-bold uppercase tracking-widest text-gray-400 hover:text-blue-500 hover:border-blue-500/50 transition-all flex items-center justify-center gap-2"
+          className="mt-auto w-full py-2.5 rounded-xl border border-dashed border-gray-200 dark:border-slate-800 text-[10px] font-bold uppercase tracking-widest text-gray-400 hover:text-blue-500 hover:border-blue-500/50 transition-all flex items-center justify-center gap-2"
         >
           <Maximize2 className="w-3 h-3" />
           Read Full Analysis
@@ -994,7 +1368,7 @@ export default function Card({
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50 dark:divide-slate-800">
-            {currentData.slice(0, 50).map((review, idx) => (
+            {(currentData || []).slice(0, 50).map((review, idx) => (
               <tr key={`${review.id}-${idx}`} className="hover:bg-gray-50/50 dark:hover:bg-slate-800/50 transition">
                 <td className={cn(
                   "px-3 py-2 font-medium truncate max-w-[120px]",
@@ -1012,7 +1386,7 @@ export default function Card({
             ))}
           </tbody>
         </table>
-        {currentData.length === 0 && (
+        {currentData?.length === 0 && (
           <div className="text-center py-10 text-gray-400 italic text-xs">No records found</div>
         )}
       </div>
@@ -1143,6 +1517,7 @@ export default function Card({
         {card.vizType === 'days' && <div className="h-full">{renderDays()}</div>}
         {card.vizType === 'table' && <div className="h-full">{renderTable()}</div>}
         {card.vizType === 'summary' && renderSummary()}
+        {card.vizType === 'chat' && <div className="h-full">{renderChat()}</div>}
       </div>
 
       <DetailModal 
@@ -1181,11 +1556,21 @@ export default function Card({
         theme={theme}
       />
 
+      <ChatModal 
+        isOpen={showChatModal}
+        onClose={() => setShowChatModal(false)}
+        messages={chatMessages}
+        onSend={(q) => handleSendMessage(q)}
+        onClear={() => setChatMessages([])}
+        isLoading={isChatLoading}
+        theme={theme}
+      />
+
       {(card.display.showTotal && (card.vizType === 'bar' || card.vizType === 'line' || card.vizType === 'table')) && (
         <div className="mt-6 pt-6 border-t border-gray-100 dark:border-slate-900 text-[11px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest flex items-center justify-between">
           <span>Aggregate Sum:</span>
           <div className="flex items-center gap-2 font-mono">
-            {card.comparison.enabled && prevData && (
+            {card.comparison.enabled && prevData && prevData.length > 0 && (
               <span className={cn(
                 "font-bold text-[10px]",
                 theme === 'dark' ? "text-slate-100 opacity-90" : "text-gray-500 opacity-100"
@@ -1201,7 +1586,7 @@ export default function Card({
               )}
               style={{ color: theme === 'light' ? colors.primary : undefined }}
             >
-              {currentData.length.toLocaleString()}
+              {(currentData?.length || 0).toLocaleString()}
             </span>
           </div>
         </div>

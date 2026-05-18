@@ -1,5 +1,5 @@
 import { CardConfig, VizType } from '../types';
-import { X, Hash, BarChart3, LineChart, PieChart, Trophy, Calendar, Filter, MousePointer2, Info, Table as TableIcon, FileText } from 'lucide-react';
+import { X, Hash, BarChart3, LineChart, PieChart, Trophy, Calendar, Filter, MousePointer2, Info, Table as TableIcon, FileText, MessageSquareCode } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -39,6 +39,7 @@ export default function ConfigPanel({
     { type: 'days', icon: Calendar, label: 'Days', info: 'Segment items based on their age in the system (Submitted to Today or Reviewed).' },
     { type: 'table', icon: TableIcon, label: 'Table', info: 'Provides a detailed list of all records matching your filter criteria.' },
     { type: 'summary', icon: FileText, label: 'Summary', info: 'AI-generated summary of findings, trends, and benchmarks based on current data.' },
+    { type: 'chat', icon: MessageSquareCode, label: 'AI Chat', info: 'Interactive chat interface to ask specific questions about the full review dataset.' },
   ];
 
   const updateFilters = (update: any) => {
@@ -134,7 +135,8 @@ export default function ConfigPanel({
               </section>
 
               {/* Section 3: Filters */}
-              <section className="space-y-6">
+              {card.vizType !== 'chat' && (
+                <section className="space-y-6">
                 <div className="flex items-center gap-2 mb-4 border-b border-gray-50 dark:border-slate-900 pb-2">
                   <Filter className="w-3.5 h-3.5 text-black dark:text-white" />
                   <label className="text-[11px] font-bold text-black dark:text-white uppercase tracking-widest">Logic Filters</label>
@@ -405,9 +407,10 @@ export default function ConfigPanel({
                   </div>
                 </div>
               </section>
+              )}
 
               {/* Section 4: Comparison */}
-              {card.vizType !== 'pie' && card.vizType !== 'leaderboard' && (
+              {card.vizType !== 'pie' && card.vizType !== 'leaderboard' && card.vizType !== 'chat' && (
                 <section>
                   <div className="flex items-center justify-between mb-4 border-b border-gray-50 dark:border-slate-900 pb-2">
                     <div className="flex items-center gap-2">
@@ -450,7 +453,8 @@ export default function ConfigPanel({
               )}
 
               {/* Section 5: Display */}
-              <section className="space-y-6">
+              {card.vizType !== 'chat' && (
+                <section className="space-y-6">
                 <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest block mb-4 border-b border-gray-50 dark:border-slate-900 pb-2">Visual Specs</label>
                 <div className="space-y-3">
                   <label className="flex items-center justify-between p-4 bg-gray-50 dark:bg-slate-900 rounded-lg cursor-pointer group">
@@ -509,6 +513,7 @@ export default function ConfigPanel({
                   )}
                 </div>
               </section>
+              )}
             </div>
 
             <div className="mt-auto p-8 border-t border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50">

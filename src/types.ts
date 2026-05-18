@@ -14,7 +14,7 @@ export interface UserProfile {
   };
 }
 
-export type VizType = 'kpi' | 'bar' | 'line' | 'pie' | 'leaderboard' | 'table' | 'days' | 'summary';
+export type VizType = 'kpi' | 'bar' | 'line' | 'pie' | 'leaderboard' | 'table' | 'days' | 'summary' | 'chat';
 
 export interface CardFilters {
   status: string[];
@@ -103,6 +103,7 @@ export interface EWReview {
   isListingPage: boolean;
   version: string | null;
   developer: string | null;
+  reviewerFeedback?: string;
 }
 
 export interface FirestoreErrorInfo {
