@@ -1,6 +1,6 @@
 import dayjs from 'dayjs';
 import { EWReview, SourceConfig } from '../types';
-import { getSessionCookie, getSourceUrls } from './dataStore';
+import { getSessionCookie, setSessionCookie, getSourceUrls } from './dataStore';
 
 const FIELD_MAP: Record<keyof EWReview, string[]> = {
   id: ['id', 'extensionId', 'extension_id'],
@@ -138,6 +138,40 @@ export interface ConnectionTestResult {
   errorType: 'none' | 'cors' | 'auth' | 'network' | 'server' | 'wrong_cookie';
   detail: string;
   rawResponse?: string;
+}
+
+export interface AutoDetectResult {
+  detected: boolean;
+  cookie?: string;
+  reason?: string;
+  crossOrigin?: boolean;
+  appHost?: string;
+}
+
+/**
+ * Asks the server to capture the browser's own cookies (including HttpOnly ones)
+ * from the incoming request headers and validate them against the SketchUp API.
+ * Works when the app is served from extensions.sketchup.com — the browser
+ * automatically includes all same-origin cookies in the fetch request.
+ */
+export async function autoDetectCookie(): Promise<AutoDetectResult> {
+  try {
+    const response = await fetch('/api/auto-detect', {
+      method: 'GET',
+      // No credentials: 'include' needed — same-origin is the default
+    });
+    if (!response.ok) {
+      return { detected: false, reason: `Auto-detect endpoint returned HTTP ${response.status}.` };
+    }
+    const data: AutoDetectResult = await response.json();
+    if (data.detected && data.cookie) {
+      // Persist so subsequent API calls use it immediately
+      setSessionCookie(data.cookie);
+    }
+    return data;
+  } catch (err: any) {
+    return { detected: false, reason: `Could not reach auto-detect endpoint: ${err.message}` };
+  }
 }
 
 export async function testApiConnection(authHeader?: string): Promise<ConnectionTestResult> {
@@ -297,10 +331,10 @@ async function fetchAllPages(baseUrl: string, headers: Record<string, string>): 
   while (true) {
     let url = baseUrl;
     if (cursors) {
-      if (cursors.status1) {
+      if (cursors.status1 !== undefined && cursors.status1 !== null) {
         url += `&lastEvaluatedKey1=${encodeURIComponent(JSON.stringify(cursors.status1))}`;
       }
-      if (cursors.status2) {
+      if (cursors.status2 !== undefined && cursors.status2 !== null) {
         url += `&lastEvaluatedKey2=${encodeURIComponent(JSON.stringify(cursors.status2))}`;
       }
     }
@@ -309,6 +343,8 @@ async function fetchAllPages(baseUrl: string, headers: Record<string, string>): 
     
     const response = await fetch(url, { headers });
     if (!response.ok) {
+      const errorBody = await response.text().catch(() => 'No body');
+      console.error(`[EW] Fetch failed for page ${pageCount}. Status: ${response.status}. Body:`, errorBody);
       throw new Error(`HTTP ${response.status} ${response.statusText}`);
     }
 

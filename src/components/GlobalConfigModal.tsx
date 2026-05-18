@@ -1,8 +1,8 @@
-import { X, Lock, ChevronDown, ChevronUp, CheckCircle, XCircle, AlertCircle, Loader, ExternalLink, ShieldAlert, ShieldCheck, Globe, Plus, Trash2, ShieldQuestion } from 'lucide-react';
+import { X, Lock, ChevronDown, ChevronUp, CheckCircle, XCircle, AlertCircle, Loader, ExternalLink, ShieldAlert, ShieldCheck, Globe, Plus, Trash2, ShieldQuestion, Wand2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { getSessionCookie, setSessionCookie, getSourceUrls, setSourceUrls } from '../services/dataStore';
-import { testApiConnection, ConnectionTestResult, validateSourceUrl } from '../services/api';
+import { testApiConnection, ConnectionTestResult, validateSourceUrl, autoDetectCookie, AutoDetectResult } from '../services/api';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { SourceConfig } from '../types';
 
@@ -88,6 +88,8 @@ export default function GlobalConfigModal({
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null);
   const [showRawResponse, setShowRawResponse] = useState(false);
+  const [detecting, setDetecting] = useState(false);
+  const [detectResult, setDetectResult] = useState<AutoDetectResult | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -96,6 +98,7 @@ export default function GlobalConfigModal({
       setTestResult(null);
       setUrlResults({});
       setShowRawResponse(false);
+      setDetectResult(null);
     }
   }, [isOpen]);
 
@@ -142,6 +145,19 @@ export default function GlobalConfigModal({
   };
 
   const cookieAnalysis = useMemo(() => analyseCookies(sessionCookie), [sessionCookie]);
+
+  const handleAutoDetect = useCallback(async () => {
+    setDetecting(true);
+    setDetectResult(null);
+    setTestResult(null);
+    const result = await autoDetectCookie();
+    setDetectResult(result);
+    if (result.detected && result.cookie) {
+      setSessionCookieLocal(result.cookie);
+      if (onRefreshNeeded) onRefreshNeeded();
+    }
+    setDetecting(false);
+  }, [onRefreshNeeded]);
 
   const handleTest = useCallback(async () => {
     setTesting(true);
@@ -197,23 +213,124 @@ export default function GlobalConfigModal({
 
               {/* Intro */}
               <p className={cn('text-xs leading-relaxed', mutedCls)}>
-                Paste your <strong>full session cookie</strong> from the DevTools Network tab below. You must be signed in to{' '}
-                <a href="https://extensions.sketchup.com" target="_blank" rel="noreferrer" className="underline">extensions.sketchup.com</a>{' '}
-                as a reviewer.
+                The dashboard needs a valid session to fetch live data from the SketchUp Extension Warehouse API. Use <strong>Auto-Detect</strong> below for the easiest setup, or paste your cookie manually if auto-detect fails.
               </p>
 
-              {/* ─── CRITICAL WARNING ─── */}
-              <div className={cn('rounded-lg p-4 border flex gap-3', isDark ? 'bg-red-950/30 border-red-900/50' : 'bg-red-50 border-red-200')}>
-                <ShieldAlert className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
-                <div className="space-y-1.5">
-                  <p className={cn('text-[11px] font-bold', isDark ? 'text-red-400' : 'text-red-700')}>
-                    Do NOT use the browser console snippet or the Application tab
-                  </p>
-                  <p className={cn('text-[11px] leading-relaxed', isDark ? 'text-red-400/80' : 'text-red-600')}>
-                    The SketchUp auth cookie is <strong>HttpOnly</strong> — it is invisible to JavaScript and cannot be copied by any console script. You must copy from <strong>DevTools → Network tab → Request Headers → Cookie</strong>.
+              {/* ─── AUTO-DETECT ─── */}
+              <div className={cn('rounded-lg border p-4 space-y-3', borderCls, sectionBg)}>
+                <div className="flex items-center gap-2">
+                  <Wand2 className={cn('w-4 h-4', isDark ? 'text-blue-400' : 'text-blue-600')} />
+                  <p className={cn('text-[11px] font-bold uppercase tracking-widest', isDark ? 'text-blue-400' : 'text-blue-700')}>
+                    Auto-Detect Session
                   </p>
                 </div>
+
+                <AnimatePresence mode="wait">
+                  {/* ── Not yet attempted ── */}
+                  {!detectResult && (
+                    <motion.div key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-3">
+                      <p className={cn('text-[11px] leading-relaxed', mutedCls)}>
+                        If the app is served from <strong>extensions.sketchup.com</strong>, clicking below will capture your active session automatically. If you are running from a different host (e.g. Cloud Run), the browser security model prevents this — use the manual method instead.
+                      </p>
+                      <button
+                        onClick={handleAutoDetect}
+                        disabled={detecting}
+                        className={cn(
+                          'flex items-center gap-2 px-5 py-2.5 rounded text-[11px] font-bold uppercase tracking-widest transition w-full justify-center',
+                          isDark
+                            ? 'bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-40'
+                            : 'bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-40'
+                        )}
+                      >
+                        {detecting ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+                        {detecting ? 'Detecting…' : 'Try Auto-Detect'}
+                      </button>
+                    </motion.div>
+                  )}
+
+                  {/* ── Cross-origin: clear explanation, no false hope ── */}
+                  {detectResult && detectResult.crossOrigin && (
+                    <motion.div key="crossorigin" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                      className={cn('rounded-lg p-3 space-y-2 text-[11px]', isDark ? 'bg-slate-800 text-slate-300' : 'bg-blue-50 text-blue-900 border border-blue-200')}
+                    >
+                      <div className="flex gap-2 items-start">
+                        <ShieldAlert className={cn('w-4 h-4 shrink-0 mt-0.5', isDark ? 'text-blue-400' : 'text-blue-600')} />
+                        <div className="space-y-1.5">
+                          <p className="font-bold">Auto-detect is not available from this host</p>
+                          <p className="leading-relaxed opacity-90">
+                            This app is running on <code className={cn('px-1 py-0.5 rounded text-[10px] font-mono', isDark ? 'bg-slate-700' : 'bg-blue-100')}>{detectResult.appHost}</code>, not on <code className={cn('px-1 py-0.5 rounded text-[10px] font-mono', isDark ? 'bg-slate-700' : 'bg-blue-100')}>extensions.sketchup.com</code>. Browsers block cross-origin cookie access by design — even with HttpOnly cookies — so auto-capture is impossible here.
+                          </p>
+                          <p className="font-semibold">Use the Network tab method below — it only takes about 30 seconds.</p>
+                        </div>
+                      </div>
+                      <button onClick={() => setDetectResult(null)} className={cn('text-[10px] underline opacity-60 hover:opacity-100 mt-1', isDark ? 'text-slate-400' : 'text-blue-700')}>
+                        ← Try again
+                      </button>
+                    </motion.div>
+                  )}
+
+                  {/* ── Genuine failure (same-origin but expired/no cookie) ── */}
+                  {detectResult && !detectResult.crossOrigin && !detectResult.detected && (
+                    <motion.div key="failure" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                      className={cn('rounded-lg p-3 flex gap-2 items-start text-[11px]', isDark ? 'bg-amber-950/30 text-amber-400' : 'bg-amber-50 text-amber-700 border border-amber-200')}
+                    >
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <p className="font-bold">Session not found</p>
+                        <p>{detectResult.reason}</p>
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {/* ── Success ── */}
+                  {detectResult && detectResult.detected && (
+                    <motion.div key="success" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                      className={cn('rounded-lg p-3 flex gap-2 items-start text-[11px]', isDark ? 'bg-green-950/30 text-green-400' : 'bg-green-50 text-green-700')}
+                    >
+                      <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5" />
+                      <p className="font-semibold">Session detected and saved — dashboard is refreshing.</p>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
+
+              {/* ─── Divider ─── */}
+              <div className="flex items-center gap-3">
+                <div className={cn('flex-1 h-px', isDark ? 'bg-slate-800' : 'bg-gray-200')} />
+                <span className={cn('text-[10px] uppercase tracking-widest font-bold', labelCls)}>manual cookie entry</span>
+                <div className={cn('flex-1 h-px', isDark ? 'bg-slate-800' : 'bg-gray-200')} />
+              </div>
+
+              {/* ─── QUICK STEPS — shown by default when cross-origin detected ─── */}
+              {detectResult?.crossOrigin && (
+                <motion.div
+                  initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
+                  className={cn('rounded-lg border p-4 space-y-3 text-[11px]', borderCls, isDark ? 'bg-slate-900' : 'bg-gray-50')}
+                >
+                  <p className={cn('font-bold uppercase tracking-widest text-[10px]', labelCls)}>Quick 3-Step Guide</p>
+                  <ol className="space-y-2.5 leading-relaxed">
+                    <li className="flex gap-2.5">
+                      <span className={cn('shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold', isDark ? 'bg-blue-700 text-white' : 'bg-blue-600 text-white')}>1</span>
+                      <span className={cn(mutedCls)}>
+                        In a new tab, open <a href="https://extensions.sketchup.com" target="_blank" rel="noreferrer" className={cn('font-semibold underline', isDark ? 'text-blue-400' : 'text-blue-700')}>extensions.sketchup.com</a> and confirm you are signed in.
+                      </span>
+                    </li>
+                    <li className="flex gap-2.5">
+                      <span className={cn('shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold', isDark ? 'bg-blue-700 text-white' : 'bg-blue-600 text-white')}>2</span>
+                      <span className={cn(mutedCls)}>
+                        Press <kbd className={cn('px-1.5 py-0.5 rounded font-mono text-[10px]', isDark ? 'bg-slate-700' : 'bg-gray-200')}>F12</kbd> → <strong>Network tab</strong> → reload the page → click any request to <code className={cn('px-1 rounded font-mono text-[10px]', isDark ? 'bg-slate-700' : 'bg-gray-200')}>extensions.sketchup.com</code> → <strong>Headers → Request Headers → cookie</strong>. Right-click the value → <strong>Copy value</strong>.
+                      </span>
+                    </li>
+                    <li className="flex gap-2.5">
+                      <span className={cn('shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold', isDark ? 'bg-blue-700 text-white' : 'bg-blue-600 text-white')}>3</span>
+                      <span className={cn(mutedCls)}>Paste the copied value into the field below and click <strong>Test Connection</strong>.</span>
+                    </li>
+                  </ol>
+                  <div className={cn('rounded p-2.5 text-[10px] leading-relaxed', isDark ? 'bg-amber-950/30 text-amber-400' : 'bg-amber-50 text-amber-700 border border-amber-200')}>
+                    ⚠ You must use the <strong>Network tab</strong>. The Application tab and browser console only show non-HttpOnly tracking cookies which will not authenticate.
+                  </div>
+                </motion.div>
+              )}
 
               {/* Cookie textarea */}
               <div className="space-y-2">
@@ -226,8 +343,7 @@ export default function GlobalConfigModal({
                     inputCls
                   )}
                   placeholder="Paste the full Cookie header value from DevTools Network tab..."
-                />
-              </div>
+                /></div>
 
               {/* ─── SOURCE URLs ─── */}
               <div className={cn('rounded-lg border overflow-hidden', borderCls)}>

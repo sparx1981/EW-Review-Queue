@@ -26,7 +26,12 @@ export default defineConfig(({mode}) => {
             proxy.on('proxyReq', (proxyReq, req, _res) => {
               const customCookie = req.headers['x-session-cookie'] || req.headers['x-sketchup-cookie'];
               if (customCookie) {
+                // Explicit cookie supplied by the app (manual or auto-detected)
                 proxyReq.setHeader('Cookie', String(customCookie));
+              } else if (req.headers['cookie']) {
+                // Fallback: forward the browser's own cookies — works when served
+                // from extensions.sketchup.com (includes HttpOnly session cookies)
+                proxyReq.setHeader('Cookie', req.headers['cookie']);
               }
               proxyReq.setHeader('Accept', 'application/json');
               proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (compatible; EW-Review-Dashboard/1.0)');

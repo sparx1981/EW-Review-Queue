@@ -114,17 +114,24 @@ ${currentSummary}
 BENCHMARK PERIOD DATA:
 ${prevSummary} (Comparison Mode: ${config.period})
 
+OPERATIONAL CONTEXT:
+- The review team operates on a standard Monday-Friday business schedule.
+- Extension submissions occur 24/7, but reviews only happen on weekdays.
+- Incorporate this constraint when analyzing throughput, turnaround times, or predicted completion dates.
+
 ANALYSIS REQUIREMENTS:
-1. TREND ANALYSIS: Identify specific anomalies or spikes in daily volume. If volume is erratic, suggest possible causes based on the distribution.
-2. EFFICIENCY METRICS: Calculate and state the throughput (Average reviews/day). Mention reviewer distribution—is one person carrying the load?
-3. QUALITY RATIOS: Analyze Approved vs Denied ratios. Are we seeing an increase in rejections?
-4. COMPARATIVE INSIGHTS: How does this period perform against the benchmark? (Include percentage improvements or declines if possible).
-5. STRATEGIC RECOMMENDATION: Provide 1-2 sentences on what this data suggests for the upcoming week (e.g., "Increase reviewer capacity for weekend spikes" or "Developer 'X' may need guidance on submission quality").
+1. TREND ANALYSIS: Identify specific anomalies or spikes in daily volume. If volume is erratic, suggest possible causes.
+2. EFFICIENCY METRICS: Calculate and state the throughput (Average reviews per business day). Mention reviewer distribution.
+3. QUALITY RATIOS: Analyze Approved vs Denied ratios.
+4. COMPARATIVE INSIGHTS: How does this period perform against the benchmark?
+5. STRATEGIC RECOMMENDATION: Provide 1-2 sentences on what this data suggests for the upcoming week.
 
 CONSTRAINTS:
 - Keep the narrative concise but insightful (approx 120-150 words).
 - Use professional executive terminology.
 - Output ONLY the Markdown-formatted summary text.
+- IMPORTANT: Use double line breaks between paragraphs for readability.
+- Mention the "weekday-only review" constraint in the analysis.
 - Do not use placeholders like [Reviewer Name]; use the names provided in the data.`;
 
   // ── Cache Lookup ──────────────────────────────────────────────────────────
@@ -297,26 +304,46 @@ app.post('/api/chat', async (req, res) => {
     }
 
     // 4. Sorting & Sampling
+    const totalMatches = result.length;
     if (args.sortBy) {
       const field = args.sortBy.field;
       const direction = args.sortBy.direction === 'desc' ? -1 : 1;
       result.sort((a, b) => (String(a[field]) > String(b[field]) ? 1 : -1) * direction);
     }
 
-    return result.slice(0, 30).map(r => ({
-      name: r.extensionName,
-      status: r.status,
-      reviewer: r.reviewerName,
-      dev: r.developer,
-      date: new Date(r.dateSubmitted).toISOString().split('T')[0],
-      feedback: r.reviewerFeedback
-    }));
+    const safeISO = (val: any) => {
+      if (!val) return 'Unknown';
+      try {
+        const d = new Date(val);
+        return isNaN(d.getTime()) ? 'Unknown' : d.toISOString().split('T')[0];
+      } catch (e) {
+        return 'Unknown';
+      }
+    };
+
+    return {
+      totalMatches,
+      sampleSize: Math.min(30, result.length),
+      results: result.slice(0, 30).map(r => ({
+        name: r.extensionName,
+        status: r.status,
+        reviewer: r.reviewerName,
+        dev: r.developer,
+        date: safeISO(r.dateSubmitted),
+        feedback: r.reviewerFeedback
+      }))
+    };
   };
 
   const today = new Date().toISOString().split('T')[0];
   const totalAvailable = Array.isArray(fullData) ? fullData.length : 0;
   const systemInstruction = `You are "Dashboard AI", an expert data assistant for the SketchUp Extension Warehouse review team.
 Today's Date: ${today}. Total records available: ${totalAvailable}.
+
+OPERATIONAL CONTEXT:
+- The review team operates on a standard Monday-Friday business schedule.
+- Extension submissions occur 24/7, but reviews only happen on weekdays.
+- When calculating throughput or estimating time-to-clear benchmarks, ONLY count weekdays.
 
 REVIEWER TEAM CONTEXT:
 1. The "Reviewer Team" consists of anyone listed in the 'reviewerName' field.
@@ -384,16 +411,39 @@ Final answers should be professional, insightful, and formatted in Markdown.`;
     ];
 
     const extractText = (res: any) => {
-      if (res.text && typeof res.text === 'string') return res.text;
-      const parts = res.candidates?.[0]?.content?.parts || [];
-      const text = parts.map((p: any) => p.text || '').join('\n').trim();
+      if (!res) return "No response from AI service.";
+      
+      let text = '';
+      try {
+        if (typeof res.text === 'string') text = res.text;
+        else if (typeof res.text === 'function') text = res.text();
+      } catch (e) {}
+
+      if (text) return text.trim();
+
+      const candidate = res.candidates?.[0];
+      if (candidate?.content?.parts) {
+        text = candidate.content.parts
+          .filter((p: any) => p.text)
+          .map((p: any) => p.text)
+          .join('\n')
+          .trim();
+      }
+
       if (text) return text;
       
-      // Check for safety blocks
-      const safety = res.promptFeedback?.blockReason || res.candidates?.[0]?.finishReason;
-      if (safety && safety !== 'STOP') return `Response blocked by AI safety filters: ${safety}`;
+      const safety = res.promptFeedback?.blockReason || candidate?.finishReason;
+      if (safety && safety !== 'STOP' && safety !== 'stop' && safety !== 'SUCCESS') {
+        return `Response blocked or interrupted: ${safety}`;
+      }
       
-      return "No response generated.";
+      // If it's a function call only, we return a structural placeholder 
+      // (though the outer code should handle this)
+      if (candidate?.content?.parts?.some((p: any) => p.functionCall)) {
+        return "[Processing tool call...]";
+      }
+      
+      return "No text response generated by AI.";
     };
 
     let response = await ai.models.generateContent({
@@ -444,6 +494,73 @@ Final answers should be professional, insightful, and formatted in Markdown.`;
   }
 });
 
+// ── API: Auto-Detect Session Cookie ─────────────────────────────────────────
+// Works by reading the Cookie header the browser attaches automatically to same-
+// origin requests. This ONLY succeeds when the app is served from the same
+// origin as extensions.sketchup.com. When cross-origin, the browser never sends
+// the SketchUp cookies here — that is a browser security boundary, not a bug.
+app.get('/api/auto-detect', async (req, res) => {
+  // Determine the app's own host so we can give a precise cross-origin message
+  const appHost = (req.headers['x-forwarded-host'] || req.headers['host'] || '').toString();
+  const isSketchUpOrigin = appHost.includes('extensions.sketchup.com');
+
+  const browserCookies = req.headers['cookie'];
+
+  // ── Cross-origin: the browser will never send sketchup.com cookies here ────
+  if (!isSketchUpOrigin) {
+    return res.json({
+      detected: false,
+      crossOrigin: true,
+      appHost,
+      reason: `Auto-detect requires the app to be served from extensions.sketchup.com. This instance is running on "${appHost}", so the browser will not send SketchUp session cookies here — that is a deliberate browser security boundary. Please use the manual cookie method below.`,
+    });
+  }
+
+  // ── Same-origin path ────────────────────────────────────────────────────────
+  if (!browserCookies) {
+    return res.json({
+      detected: false,
+      reason: 'No cookies were sent. Make sure you are signed into extensions.sketchup.com and reload the app.',
+    });
+  }
+
+  try {
+    const testResponse = await fetch('https://extensions.sketchup.com/api/reviews?completedOnly=false', {
+      method: 'GET',
+      headers: {
+        'Cookie': browserCookies,
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (compatible; EW-Review-Dashboard/1.0)',
+      },
+    });
+
+    const contentType = testResponse.headers.get('content-type') || '';
+    const body = await testResponse.text();
+    const trimmed = body.trim();
+    const isHtml = trimmed.startsWith('<') || trimmed.toLowerCase().includes('<!doctype');
+    const isJson = contentType.includes('application/json') && !isHtml;
+
+    if (testResponse.ok && isJson) {
+      return res.json({ detected: true, cookie: browserCookies, status: testResponse.status });
+    }
+
+    if (testResponse.status === 401 || testResponse.status === 403 || isHtml) {
+      return res.json({
+        detected: false,
+        reason: 'Cookies were found but authentication failed — your SketchUp session may have expired. Please sign in to extensions.sketchup.com again and then retry.',
+      });
+    }
+
+    return res.json({
+      detected: false,
+      reason: `API returned HTTP ${testResponse.status}. Unable to verify session.`,
+    });
+  } catch (err: any) {
+    console.error('[auto-detect] fetch error:', err);
+    return res.json({ detected: false, reason: `Connection error: ${err.message}` });
+  }
+});
+
 // ── Proxy: forward /api/sketchup/** → extensions.sketchup.com/api/** ──────────
 app.use('/api/sketchup', async (req, res) => {
   const upstreamPath = req.url;
@@ -456,7 +573,12 @@ app.use('/api/sketchup', async (req, res) => {
 
   const sessionCookie = req.headers['x-session-cookie'] || req.headers['x-sketchup-cookie'];
   if (sessionCookie) {
+    // Explicit cookie supplied by the app (manual or previously auto-detected)
     forwardHeaders['Cookie'] = String(sessionCookie);
+  } else if (req.headers['cookie']) {
+    // Fallback: use browser's own cookies — works automatically when the app is
+    // served from extensions.sketchup.com (browser sends HttpOnly cookies too)
+    forwardHeaders['Cookie'] = req.headers['cookie'];
   }
 
   const authHeader = req.headers['authorization'];
