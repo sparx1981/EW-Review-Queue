@@ -1,4 +1,5 @@
-import { useMemo, useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { CardConfig, EWReview, Dashboard } from '../types';
 import { applyFilters, getFilterSteps, getDateRange, getPreviousDateRange } from '../services/dataStore';
 import dayjs from 'dayjs';
@@ -312,14 +313,189 @@ const EnlargedChartModal = ({
   );
 };
 
-const ChatModal = ({ isOpen, onClose, messages, onSend, onClear, isLoading, theme }: { 
+// ── Query pipeline hover breakdown ─────────────────────────────────────────
+interface PipelineStage { stage: string; applied: string; count: number; }
+interface QuerySummary  { count: number; percentage?: string; pipeline: PipelineStage[]; }
+interface ChatMessage   { role: 'user' | 'ai'; text: string; querySummaries?: QuerySummary[]; }
+
+/**
+ * HoverCountBadge — renders a single query-count number with a portal tooltip.
+ *
+ * The tooltip is rendered in document.body via createPortal so it is never
+ * clipped by scrollable parents or overflow:hidden containers. Position is
+ * calculated from getBoundingClientRect() and expressed as fixed px coords.
+ */
+const HoverCountBadge = ({ n, qs, displayValue }: { n: number; qs: QuerySummary; displayValue?: string }) => {
+  const spanRef = useRef<HTMLSpanElement>(null);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+
+  const show = (e: React.MouseEvent) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setPos({ x: r.left, y: r.bottom + 6 });
+  };
+  const hide = () => setPos(null);
+
+  return (
+    <>
+      <span
+        ref={spanRef}
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        style={{
+          borderBottom: '2px dotted #60a5fa',
+          color: '#60a5fa',
+          fontWeight: 700,
+          cursor: 'help',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 2
+        }}
+      >
+        {displayValue ?? n.toLocaleString()}
+        <span style={{ fontSize: 9, opacity: 0.7 }}>ⓘ</span>
+      </span>
+      {pos && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            left: Math.min(pos.x, window.innerWidth - 300),
+            top: pos.y,
+            zIndex: 99999,
+            width: 288
+          }}
+          onMouseEnter={() => {/* keep open while hovering tooltip */}}
+          onMouseLeave={hide}
+        >
+          <div className="rounded-xl shadow-2xl overflow-hidden border border-slate-700">
+            <div className="bg-slate-900 px-4 py-2.5 border-b border-slate-700/60 flex items-center gap-2">
+              <span className="text-blue-400 font-bold text-[10px] uppercase tracking-widest">
+                ⓪ Data Source Criteria
+              </span>
+            </div>
+            <div className="bg-slate-950 divide-y divide-slate-800/60">
+              {qs.pipeline.map((s, i) => (
+                <div key={i} className="px-4 py-2.5 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-slate-500 text-[9px] uppercase tracking-wide leading-tight">{s.stage}</div>
+                    <div className="text-slate-300 text-[11px] font-medium mt-0.5 truncate">{s.applied}</div>
+                  </div>
+                  <span className={cn(
+                    "font-bold tabular-nums shrink-0",
+                    i === qs.pipeline.length - 1 ? "text-blue-300 text-sm" : "text-slate-400 text-xs"
+                  )}>
+                    {s.count.toLocaleString()}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+};
+
+/**
+ * AnnotatedText — renders markdown AI responses with hoverable number badges.
+ *
+ * Strategy: before passing to ReactMarkdown, replace every number N that matches
+ * a querySummary count with the inline-code marker `[DCOUNT:N]`. ReactMarkdown
+ * turns this into a <code> element which we intercept via the `code` component
+ * override and render as <HoverCountBadge> instead. This approach works even when
+ * the number appears inside **bold** or _italic_ markdown because those become
+ * separate React elements that ReactMarkdown renders independently — the inline
+ * code marker survives the markdown parse intact.
+ */
+const AnnotatedText = ({ text, querySummaries }: {
+  text: string; querySummaries?: QuerySummary[]; theme?: 'light' | 'dark';
+}) => {
+  if (!querySummaries?.length) return <ReactMarkdown>{text}</ReactMarkdown>;
+
+  // Separate count and percentage summaries into distinct maps
+  const countOnlySummaries = querySummaries.filter(qs => !qs.percentage);
+  const pctOnlySummaries   = querySummaries.filter(qs =>  qs.percentage);
+  const countSet = new Set(countOnlySummaries.map(qs => qs.count));
+  const countMap = new Map(countOnlySummaries.map(qs => [qs.count, qs]));
+  const pctMap   = new Map(pctOnlySummaries.map(qs => [qs.percentage!, qs]));
+
+  // Pre-process text: replace percentage patterns FIRST (so "62.4%" is handled
+  // before the count pass sees "62"), then replace count-matching numbers.
+  //
+  // Regex: matches either comma-formatted numbers (1,912) OR plain 2+ digit
+  // numbers (50, 37). Lookaround skips date/decimal components:
+  //   (?<![.,-\d]) — not preceded by . , - or digit (avoids "2020" in "2020-11-04")
+  //   (?![.,-])     — not followed by . , - (avoids "11" in "2020-11-04")
+  //
+  // Token format: `[DCOUNT:display:numeric]` where display keeps original
+  // formatting (e.g. "1,912") and numeric is the stripped integer (e.g. 1912).
+  const withPct = pctMap.size > 0
+    ? text.replace(/(\d+\.?\d*)%/g, (match, pctNum: string) => {
+        const qs = pctMap.get(pctNum);
+        return qs ? `\`[DPCT:${pctNum}%]\`` : match;
+      })
+    : text;
+
+  const annotated = withPct.replace(
+    /(?<![.,\-\d])(\d{1,3}(?:,\d{3})+|\d{2,})(?![.,\-])/g,
+    (match) => {
+      const n = parseInt(match.replace(/,/g, ''), 10);
+      return countSet.has(n) ? `\`[DCOUNT:${match}:${n}]\`` : match;
+    }
+  );
+
+  const components: any = {
+    // Do NOT check the `inline` prop: in react-markdown v8+ it is
+    // undefined for all code elements, so !inline is always true.
+    code: ({ children }: any) => {
+      const content = String(children ?? '');
+
+      // Count badge — new format [DCOUNT:display:numeric], display may have commas
+      const countM = content.match(/^\[DCOUNT:(.+?):(\d+)\]$/);
+      if (countM) {
+        const displayStr = countM[1]; // e.g. "1,912"
+        const n = parseInt(countM[2], 10); // e.g. 1912
+        const qs = countMap.get(n);
+        if (qs) return <HoverCountBadge n={n} qs={qs} displayValue={displayStr} />;
+      }
+
+      // Legacy format [DCOUNT:N] (no display:numeric split)
+      const countMLegacy = content.match(/^\[DCOUNT:(\d+)\]$/);
+      if (countMLegacy) {
+        const n = parseInt(countMLegacy[1], 10);
+        const qs = countMap.get(n);
+        if (qs) return <HoverCountBadge n={n} qs={qs} />;
+      }
+
+      // Percentage badge e.g. [DPCT:32.7%]
+      const pctM = content.match(/^\[DPCT:(\d+\.?\d*)%\]$/);
+      if (pctM) {
+        const pctStr = pctM[1];
+        const qs = pctMap.get(pctStr);
+        if (qs) return <HoverCountBadge n={parseFloat(pctStr)} qs={qs} displayValue={pctStr + '%'} />;
+      }
+
+      return <code>{children}</code>;
+    }
+  };
+
+  return <ReactMarkdown components={components}>{annotated}</ReactMarkdown>;
+};
+
+const ChatModal = ({ isOpen, onClose, messages, cumulativeQuerySummaries, onSend, onClear, isLoading, theme, followUpQuestion, onClearFollowUp }: { 
   isOpen: boolean; 
   onClose: () => void; 
-  messages: { role: 'user' | 'ai', text: string }[];
+  messages: ChatMessage[];
+  // All querySummaries accumulated across the entire conversation. Used so that
+  // numbers mentioned from previous context (without a fresh tool call) still get
+  // hover badges. Per-message querySummaries are merged on top and take priority.
+  cumulativeQuerySummaries?: QuerySummary[];
   onSend: (text: string) => void;
   onClear: () => void;
   isLoading: boolean;
-  theme: 'light' | 'dark' 
+  theme: 'light' | 'dark';
+  followUpQuestion?: string | null;
+  onClearFollowUp?: () => void;
 }) => {
   const [input, setInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -402,34 +578,92 @@ const ChatModal = ({ isOpen, onClose, messages, onSend, onClear, isLoading, them
                   <p className="text-[10px] uppercase tracking-widest mt-1">E.g. "Who has the most approvals this month?"</p>
                 </div>
               )}
-              {messages.map((m, i) => (
-                <div key={i} className={cn(
-                  "flex flex-col max-w-[85%]",
-                  m.role === 'user' ? "ml-auto items-end" : "mr-auto items-start"
-                )}>
-                  <div className={cn(
-                    "px-4 py-3 rounded-2xl text-sm",
-                    m.role === 'user' 
-                      ? "bg-blue-600 text-white rounded-tr-none shadow-md" 
-                      : cn(
-                        "border rounded-tl-none shadow-sm",
-                        theme === 'dark' 
-                          ? "bg-slate-900 text-slate-200 border-slate-800" 
-                          : "bg-gray-50 text-gray-800 border-gray-100"
-                      )
+              {messages.map((m, i) => {
+                // Detect if this is the listing-page clarification message so we can
+                // render quick-reply buttons (include / exclude) below the bubble.
+                const lowerText = (m.text || '').toLowerCase();
+                const isListingPageQuestion =
+                  m.role === 'ai' &&
+                  lowerText.includes('listing page') &&
+                  lowerText.includes('include') &&
+                  lowerText.includes('exclude');
+
+                // Only show buttons on the LAST clarification in the conversation
+                // (so old ones don't re-appear if the user scrolls up).
+                const isLastAiMsg = m.role === 'ai' &&
+                  messages.slice(i + 1).every(mm => mm.role !== 'ai');
+
+                return (
+                  <div key={i} className={cn(
+                    "flex flex-col max-w-[85%]",
+                    m.role === 'user' ? "ml-auto items-end" : "mr-auto items-start"
                   )}>
                     <div className={cn(
-                      "prose prose-sm max-w-none",
-                      theme === 'dark' ? "dark:prose-invert" : ""
+                      "px-4 py-3 rounded-2xl text-sm",
+                      m.role === 'user' 
+                        ? "bg-blue-600 text-white rounded-tr-none shadow-md" 
+                        : cn(
+                          "border rounded-tl-none shadow-sm",
+                          theme === 'dark' 
+                            ? "bg-slate-900 text-slate-200 border-slate-800" 
+                            : "bg-gray-50 text-gray-800 border-gray-100"
+                        )
                     )}>
-                      <ReactMarkdown>{m.text || ''}</ReactMarkdown>
+                      <div className={cn(
+                        "prose prose-sm max-w-none chat-modal-body",
+                        theme === 'dark' ? "dark:prose-invert" : ""
+                      )}>
+                        {m.role === 'ai'
+                          ? <AnnotatedText
+                              text={m.text || ''}
+                              theme={theme}
+                              querySummaries={[
+                                // Cumulative set first (all previous turns)
+                                ...(cumulativeQuerySummaries || []),
+                                // This message's own querySummaries last — they override
+                                // cumulative entries for the same count/percentage key
+                                ...(m.querySummaries || [])
+                              ]}
+                            />
+                          : <ReactMarkdown>{m.text || ''}</ReactMarkdown>
+                        }
+                      </div>
                     </div>
+
+                    {/* Quick-reply buttons for the listing-page clarification */}
+                    {isListingPageQuestion && isLastAiMsg && !isLoading && (
+                      <div className="flex gap-2 mt-2 flex-wrap">
+                        <button
+                          onClick={() => onSend('Include listing pages')}
+                          className={cn(
+                            "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all",
+                            theme === 'dark'
+                              ? "bg-emerald-950/40 border-emerald-700/50 text-emerald-300 hover:bg-emerald-900/60 hover:border-emerald-500"
+                              : "bg-emerald-50 border-emerald-300 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-400"
+                          )}
+                        >
+                          <span className="text-[10px]">✓</span> Include Listing Pages
+                        </button>
+                        <button
+                          onClick={() => onSend('Exclude listing pages')}
+                          className={cn(
+                            "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all",
+                            theme === 'dark'
+                              ? "bg-red-950/40 border-red-700/50 text-red-300 hover:bg-red-900/60 hover:border-red-500"
+                              : "bg-red-50 border-red-300 text-red-700 hover:bg-red-100 hover:border-red-400"
+                          )}
+                        >
+                          <span className="text-[10px]">✗</span> Exclude Listing Pages
+                        </button>
+                      </div>
+                    )}
+
+                    <span className="text-[9px] uppercase tracking-widest font-bold text-gray-400 mt-1.5 px-1">
+                      {m.role === 'user' ? 'You' : 'Dashboard AI'}
+                    </span>
                   </div>
-                  <span className="text-[9px] uppercase tracking-widest font-bold text-gray-400 mt-1.5 px-1">
-                    {m.role === 'user' ? 'You' : 'Dashboard AI'}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
               {isLoading && (
                 <div className="flex flex-col mr-auto items-start">
                   <div className={cn(
@@ -444,35 +678,72 @@ const ChatModal = ({ isOpen, onClose, messages, onSend, onClear, isLoading, them
               )}
             </div>
 
-            <form onSubmit={handleSubmit} className={cn(
-              "p-6 border-t",
+            <div className={cn(
+              "border-t",
               theme === 'dark' ? "bg-slate-950 border-slate-900" : "bg-white border-gray-100"
             )}>
-              <div className="relative flex items-center">
-                <input 
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder="Ask a question..."
-                  className={cn(
-                    "w-full border rounded-2xl px-6 py-4 pr-24 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition",
-                    theme === 'dark' 
-                      ? "bg-slate-900 border-slate-800 text-white placeholder:text-slate-500" 
-                      : "bg-gray-100 border-gray-200 text-gray-900 placeholder:text-gray-400"
+              {/* Follow-up suggestion chip — shown after each AI response */}
+              {followUpQuestion && !isLoading && (
+                <div className={cn(
+                  "px-6 pt-4 pb-2 flex items-start gap-2"
+                )}>
+                  <div className={cn(
+                    "flex-1 flex items-center gap-3 px-4 py-3 rounded-2xl border text-sm cursor-pointer transition group/followup",
+                    theme === 'dark'
+                      ? "bg-blue-950/30 border-blue-800/40 hover:bg-blue-950/60 hover:border-blue-600/60"
+                      : "bg-blue-50/70 border-blue-200 hover:bg-blue-100 hover:border-blue-300"
                   )}
-                  disabled={isLoading}
-                />
-                <div className="absolute right-3 flex items-center gap-2">
-                  <button 
-                    type="submit"
-                    disabled={!input.trim() || isLoading}
-                    className="p-2.5 bg-blue-600 text-white rounded-xl shadow-lg hover:bg-blue-700 disabled:opacity-50 disabled:grayscale transition active:scale-95"
+                    onClick={() => {
+                      onSend(followUpQuestion);
+                      if (onClearFollowUp) onClearFollowUp();
+                    }}
                   >
-                    <Send className="w-4 h-4" />
+                    <span className="text-base leading-none flex-shrink-0">💬</span>
+                    <span className={cn(
+                      "flex-1 text-[12px] font-medium leading-snug",
+                      theme === 'dark' ? "text-blue-300" : "text-blue-700"
+                    )}>{followUpQuestion}</span>
+                    <Send className={cn(
+                      "w-3.5 h-3.5 flex-shrink-0 opacity-0 group-hover/followup:opacity-100 transition-opacity",
+                      theme === 'dark' ? "text-blue-400" : "text-blue-500"
+                    )} />
+                  </div>
+                  <button
+                    onClick={() => { if (onClearFollowUp) onClearFollowUp(); }}
+                    className="mt-1 p-1.5 text-gray-300 hover:text-gray-500 transition flex-shrink-0"
+                    title="Dismiss"
+                  >
+                    <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
-              </div>
-            </form>
+              )}
+              <form onSubmit={handleSubmit} className="p-6 pt-3">
+                <div className="relative flex items-center">
+                  <input 
+                    type="text"
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    placeholder="Ask a question..."
+                    className={cn(
+                      "w-full border rounded-2xl px-6 py-4 pr-24 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition",
+                      theme === 'dark' 
+                        ? "bg-slate-900 border-slate-800 text-white placeholder:text-slate-500" 
+                        : "bg-gray-100 border-gray-200 text-gray-900 placeholder:text-gray-400"
+                    )}
+                    disabled={isLoading}
+                  />
+                  <div className="absolute right-3 flex items-center gap-2">
+                    <button 
+                      type="submit"
+                      disabled={!input.trim() || isLoading}
+                      className="p-2.5 bg-blue-600 text-white rounded-xl shadow-lg hover:bg-blue-700 disabled:opacity-50 disabled:grayscale transition active:scale-95"
+                    >
+                      <Send className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
           </motion.div>
         </div>
       )}
@@ -480,7 +751,7 @@ const ChatModal = ({ isOpen, onClose, messages, onSend, onClear, isLoading, them
   );
 };
 
-const SummaryModal = ({ isOpen, onClose, summary, title, theme }: { isOpen: boolean; onClose: () => void; summary: string | null; title: string; theme: 'light' | 'dark' }) => {
+const SummaryModal = ({ isOpen, onClose, summary, querySummaries, title, theme }: { isOpen: boolean; onClose: () => void; summary: string | null; querySummaries?: QuerySummary[]; title: string; theme: 'light' | 'dark' }) => {
   return (
     <AnimatePresence>
       {isOpen && (
@@ -496,7 +767,7 @@ const SummaryModal = ({ isOpen, onClose, summary, title, theme }: { isOpen: bool
             initial={{ scale: 0.95, opacity: 0, y: 20 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.95, opacity: 0, y: 20 }}
-            className="bg-slate-950 text-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col relative z-20 border border-slate-800"
+            className="bg-slate-950 text-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col relative z-20 border border-slate-800"
           >
             <div className="px-8 py-6 border-b border-slate-900 flex items-center justify-between">
               <h3 className="text-xl font-bold text-white tracking-tight flex items-center gap-3">
@@ -510,14 +781,25 @@ const SummaryModal = ({ isOpen, onClose, summary, title, theme }: { isOpen: bool
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="flex-1 overflow-auto p-10 text-base leading-relaxed text-white">
-              <div className="prose prose-invert max-w-none [&_*]:text-white!">
-                <ReactMarkdown>{summary || 'No summary available.'}</ReactMarkdown>
+            <div className="flex-1 overflow-auto p-8 space-y-1">
+              <div className={cn(
+                "prose prose-invert max-w-none",
+                // Override prose defaults for better readability in this dark modal
+                "[&_h2]:text-blue-400 [&_h2]:text-sm [&_h2]:font-bold [&_h2]:uppercase [&_h2]:tracking-widest [&_h2]:mt-6 [&_h2]:mb-3 [&_h2]:pb-2 [&_h2]:border-b [&_h2]:border-slate-800 [&_h2]:first:mt-0",
+                "[&_h3]:text-slate-200 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2",
+                "[&_p]:text-slate-300 [&_p]:text-sm [&_p]:leading-relaxed [&_p]:mb-3",
+                "[&_ul]:mt-2 [&_ul]:mb-3 [&_ul]:space-y-1.5",
+                "[&_li]:text-slate-300 [&_li]:text-sm [&_li]:leading-relaxed",
+                "[&_strong]:text-white [&_strong]:font-semibold",
+                "[&_em]:text-slate-400",
+                "[&_hr]:border-slate-800 [&_hr]:my-4"
+              )}>
+                <AnnotatedText text={summary || 'No summary available.'} querySummaries={querySummaries} theme="dark" />
               </div>
             </div>
-            <div className="px-8 py-6 bg-slate-900/50 text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center justify-between border-t border-slate-900">
+            <div className="px-8 py-4 bg-slate-900/50 text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center justify-between border-t border-slate-800/60">
               <span>AI-Generated Analysis</span>
-              <span>Proprietary Insights Agent</span>
+              <span className="text-blue-500/60">Insights Agent</span>
             </div>
           </motion.div>
         </div>
@@ -640,12 +922,19 @@ export default function Card({
   const [showEnlarged, setShowEnlarged] = useState(false);
   const [showSummaryModal, setShowSummaryModal] = useState(false);
   const [summary, setSummary] = useState<string | null>(null);
+  const [summaryQuerySummaries, setSummaryQuerySummaries] = useState<QuerySummary[]>([]);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
-  const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'ai', text: string }[]>([]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  // cumulativeQuerySummaries: merged pipeline data from ALL conversation turns.
+  // When the AI answers using context from previous turns without a fresh tool call,
+  // its own querySummaries would be empty. The cumulative set ensures every number
+  // that appeared in any earlier turn still gets a hover badge.
+  const [cumulativeQuerySummaries, setCumulativeQuerySummaries] = useState<QuerySummary[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [showChatModal, setShowChatModal] = useState(false);
+  const [pendingFollowUp, setPendingFollowUp] = useState<string | null>(null);
 
   const colors = useMemo(() => {
     const scheme = globalColorScheme || card.display.colorScheme || 'blue';
@@ -775,6 +1064,7 @@ export default function Card({
 
       const data = await response.json();
       setSummary(data.summary);
+      if (Array.isArray(data.querySummaries)) setSummaryQuerySummaries(data.querySummaries);
     } catch (err: any) {
       if (err.name !== 'AbortError') {
         console.error('Summary error:', err);
@@ -819,7 +1109,11 @@ export default function Card({
         dateSubmitted: r.dateSubmitted,
         dateReviewed: r.dateReviewed,
         extensionName: r.extensionName,
-        reviewerFeedback: r.reviewerFeedback
+        reviewerFeedback: r.reviewerFeedback,
+        // isListingPage MUST be included so the server's listing-page filter works.
+        // Without this field, r.isListingPage is undefined on the server and the filter
+        // (!r.isListingPage) passes every record — causing a systematic overcount.
+        isListingPage: r.isListingPage
       }));
     };
 
@@ -830,6 +1124,7 @@ export default function Card({
     let attempts = 0;
     const maxAttempts = 3;
     let finalResponse = "";
+    let latestQuerySummaries: QuerySummary[] = [];
 
     while (attempts < maxAttempts) {
       try {
@@ -839,7 +1134,15 @@ export default function Card({
           body: JSON.stringify({
             fullData: trim(reviews), 
             question: input,
-            history: chatMessages
+            history: chatMessages,
+            // timezoneOffsetMinutes: browser UTC offset (e.g. BST = -60) so the server
+            // shifts bare date start boundaries to match the card's dayjs().startOf('day').
+            timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+            // nowMs: current epoch ms sent with every request. The server clamps the end of
+            // any date range to this value, matching the card's end: now.valueOf() snapshot.
+            // Without this, parseTzAwareEnd("2026-05-18") expands to end-of-day local time
+            // and the AI overcounts records that arrived today after the card last rendered.
+            nowMs: Date.now()
           })
         });
         
@@ -847,14 +1150,22 @@ export default function Card({
         
         const data = await response.json();
         const text = data.response;
+        // Capture pipeline summaries for the hover breakdown — keep the LAST successful set
+        if (Array.isArray(data.querySummaries)) latestQuerySummaries = data.querySummaries;
 
-        if (text && text !== "No response generated.") {
+        // Treat empty, placeholder, or known-bad strings as invalid so we retry.
+        // "[Processing tool call...]" can appear if the AI never produced a text
+        // turn — the server now returns "" in that case, but guard against old strings too.
+        const INVALID_RESPONSES = [
+          "", "No response generated.", "No text response generated by AI.",
+          "[Processing tool call...]"
+        ];
+        if (text && !INVALID_RESPONSES.includes(text.trim())) {
           finalResponse = text;
           break;
         } else {
           attempts++;
           if (attempts < maxAttempts) {
-            // Small delay between retries
             await new Promise(resolve => setTimeout(resolve, 500));
           }
         }
@@ -874,7 +1185,36 @@ export default function Card({
       finalResponse = `I'm sorry, I was unable to generate a narrative response after ${maxAttempts} attempts${detail}. This may happen if the data query was too complex or returned no results. Try rephrasing your question.`;
     }
 
-    setChatMessages(prev => [...prev, { role: 'ai', text: finalResponse }]);
+    // Parse and strip the follow-up question from the AI response.
+    // The AI is instructed to end responses with a blockquote: > 💬 **What would you like to explore next?** ...
+    const followUpRegex = />\s*💬\s*\*\*What would you like to explore next\?\*\*\s*(.+?)$/m;
+    const followUpMatch = finalResponse.match(followUpRegex);
+    if (followUpMatch) {
+      setPendingFollowUp(followUpMatch[1].trim());
+      // Remove the follow-up blockquote from the displayed response body
+      finalResponse = finalResponse.replace(followUpRegex, '').trimEnd();
+    } else {
+      setPendingFollowUp(null);
+    }
+
+    setChatMessages(prev => [...prev, { role: 'ai', text: finalResponse, querySummaries: latestQuerySummaries }]);
+
+    // Merge this turn's querySummaries into the cumulative store. Latest pipeline
+    // for a given count/percentage wins (overrides any older entry for the same key).
+    if (latestQuerySummaries.length > 0) {
+      setCumulativeQuerySummaries(prev => {
+        const merged = new Map<string, QuerySummary>();
+        // Existing cumulative entries first
+        prev.forEach(qs => {
+          merged.set(qs.percentage ? `pct:${qs.percentage}` : `cnt:${qs.count}`, qs);
+        });
+        // New entries override (latest query pipeline wins)
+        latestQuerySummaries.forEach(qs => {
+          merged.set(qs.percentage ? `pct:${qs.percentage}` : `cnt:${qs.count}`, qs);
+        });
+        return Array.from(merged.values());
+      });
+    }
     setIsChatLoading(false);
   };
 
@@ -1160,7 +1500,7 @@ export default function Card({
             "text-sm leading-relaxed text-center px-2 pb-10",
             isLightCard ? "text-slate-600" : "text-slate-300"
           )}>
-            <ReactMarkdown>{summary || 'Initializing analysis engine...'}</ReactMarkdown>
+            <AnnotatedText text={summary || 'Initializing analysis engine...'} querySummaries={summaryQuerySummaries} theme={isLightCard ? 'light' : 'dark'} />
           </div>
           {/* Subtle fade to indicate more content */}
           <div className={cn(
@@ -1554,6 +1894,7 @@ export default function Card({
       <SummaryModal 
         isOpen={showSummaryModal}
         onClose={() => setShowSummaryModal(false)}
+        querySummaries={summaryQuerySummaries}
         summary={summary}
         title={card.title}
         theme={theme}
@@ -1563,10 +1904,13 @@ export default function Card({
         isOpen={showChatModal}
         onClose={() => setShowChatModal(false)}
         messages={chatMessages}
-        onSend={(q) => handleSendMessage(q)}
-        onClear={() => setChatMessages([])}
+        cumulativeQuerySummaries={cumulativeQuerySummaries}
+        onSend={(q) => { handleSendMessage(q); setPendingFollowUp(null); }}
+        onClear={() => { setChatMessages([]); setCumulativeQuerySummaries([]); setPendingFollowUp(null); }}
         isLoading={isChatLoading}
         theme={theme}
+        followUpQuestion={pendingFollowUp}
+        onClearFollowUp={() => setPendingFollowUp(null)}
       />
 
       {(card.display.showTotal && (card.vizType === 'bar' || card.vizType === 'line' || card.vizType === 'table')) && (
